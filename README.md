@@ -91,7 +91,8 @@ powershell -ExecutionPolicy Bypass -File scripts\start.ps1 -Stop    :: 停掉
 
 `D:\QQBOT\启动\start.ps1`（用户自己的启动器）里加了一段：AstrBot 起来后检查 3333，
 没监听就用 `CHORUS_RVC_ROOT` + `NO_PROXY` 拉起本服务，并把 `-Status` / `-Stop` 也接上了。
-本仓库只负责中间层自己，启动器那边是用户侧配置。
+启动器现在管四件事：QQ → AstrBot → 本中间层（3333）→ GPT-SoVITS API（9880），
+SnowLuma 收尾；本仓库只负责中间层自己，启动器那边是用户侧配置。
 
 ## 接口
 
