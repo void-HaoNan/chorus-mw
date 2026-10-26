@@ -15,7 +15,12 @@ chorus-mw/
 ├─ rvc.py          RVC 相关调用的调度（全部走子进程）
 ├─ sep_worker.py   分离/去混响子进程（跑在 RVC 运行时里）
 ├─ rvc_worker.py   变声子进程（跑在 RVC 运行时里）
-├─ config.py       路径与默认参数（都能用环境变量覆盖）
+├─ config.py       路径与参数（RVC 路径**不写死**，只认 CHORUS_RVC_ROOT）
+├─ scripts/
+│  ├─ start.ps1            启停 + 状态（会自动设 NO_PROXY、等端口就绪）
+│  └─ fetch_rubberband.ps1 下载 rubberband.exe + sndfile.dll 到 bin/
+├─ tools/
+│  └─ check_plugin_compat.py  插件升级后比对参数表
 ├─ bin/            rubberband.exe + sndfile.dll（音高变换）
 ├─ libs/           gradio_client 0.2.9（只给两个 worker 用，对 Gradio 3.14 的 ws 协议）
 ├─ libs_web/       Gradio 4.44 + 依赖（app.py 用，sse 协议）
