@@ -1,0 +1,10 @@
+# 服务端（app.py / pipeline.py / chorus.py / rvc.py）用的依赖
+# 装法：pip install --target libs_web -r requirements.txt
+#
+# 注意版本：huggingface_hub 必须 0.35.x。
+# gradio 4.44 还在 import HfFolder，hub 2.x 把这个符号删了，装新了会直接 ImportError。
+gradio==4.44.1
+huggingface_hub==0.35.3
+soundfile>=0.12
+requests>=2.31
+numpy>=1.24

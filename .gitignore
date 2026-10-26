@@ -1,0 +1,19 @@
+__pycache__/
+*.pyc
+*.pyo
+*.bak-*
+*.log
+
+# 运行时产物，不进仓库
+_work/
+cache/
+output/
+
+# 依赖目录（按 requirements 现装）
+libs/
+libs_web/
+
+# 第三方二进制（跑 scripts/fetch_rubberband.ps1 现下）
+bin/*.exe
+bin/*.dll
+bin/*.txt

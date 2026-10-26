@@ -1,0 +1,7 @@
+# 子进程（sep_worker.py / rvc_worker.py）用的依赖
+# 这两个跑在 RVC 整合包自带的 runtime\python.exe 里，只用它缺的那一点点东西。
+# 装法：runtime\python.exe -m pip install --target libs --no-deps -r requirements-worker.txt
+#
+# 0.2.9 是最后一个只讲 ws 协议的 gradio_client，也是唯一能驱动 Gradio 3.14
+# （RVC WebUI）的版本。千万别升。
+gradio_client==0.2.9
