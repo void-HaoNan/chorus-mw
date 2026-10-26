@@ -1,5 +1,19 @@
 # CHANGELOG
 
+## 0.5.0 — 2026-10-27
+
+### 变更
+- **不再把 RVC 路径写死在代码里**：`config.py` 的 `RVC_ROOT` 只认环境变量
+  `CHORUS_RVC_ROOT`，没设就带一段说明直接退出。公开仓库里不再出现任何本机路径。
+- 新增 `config.check_paths()`：启动前把 runtime / ffmpeg / 模型目录 / rubberband+SNDFILE
+  一次检查完，问题列表一起报，不会带着半个环境跑到一半再炸。
+
+### 新增
+- `scripts/start.ps1`：启停 + 状态三条命令，自动设 `NO_PROXY`（不设会被系统代理坑）、
+  等端口就绪、日志写到 `_work\mw.log` / `_work\mw.err`。
+- 接进 AstrBot 的一键启动器：AstrBot 起来后检查 3333，没监听就拉起来，
+  `-Status` / `-Stop` 也带上了这个服务。
+
 ## 0.4.0 — 2026-10-27
 
 真跑通插件调用的一版。之前服务端跑 Gradio 3.14，插件（gradio_client 2.7.2）连不上，

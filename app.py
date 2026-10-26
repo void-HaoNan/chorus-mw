@@ -257,6 +257,12 @@ def build():
 
 if __name__ == "__main__":
     config.ensure_dirs()
+    problems = config.check_paths()
+    if problems:
+        print("启动前体检没过：", flush=True)
+        for item in problems:
+            print("  - " + item, flush=True)
+        raise SystemExit(2)
     print("chorus-mw 启动，RVC=%s 端口=%d" % (config.RVC_ROOT, config.RVC_PORT), flush=True)
     build().queue().launch(
         server_name=os.environ.get("CHORUS_HOST", "127.0.0.1"),

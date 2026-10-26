@@ -1,11 +1,32 @@
-"""路径和默认参数。所有值都可以用同名环境变量覆盖，方便换机器。"""
+"""路径和默认参数。所有值都可以用同名环境变量覆盖，方便换机器。
+
+RVC 整合包的路径**不写死在代码里**，必须用环境变量给：
+
+    set CHORUS_RVC_ROOT=D:\\你的路径\\RVC20260718Nvidia50x0
+
+仓库自带的 start.ps1 会替你设好这一项，直接用它启动就不用管。
+"""
 import os
 
 HOME = os.path.dirname(os.path.abspath(__file__))
 
-RVC_ROOT = os.environ.get(
-    "CHORUS_RVC_ROOT", r"D:\PYMSS-RVC\RVC20260723Nvidia50x0\RVC20260718Nvidia50x0"
-)
+
+class ConfigError(RuntimeError):
+    """启动前检查没通过时抛这个，消息直接给用户看。"""
+
+
+RVC_ROOT = (os.environ.get("CHORUS_RVC_ROOT") or "").strip()
+
+if not RVC_ROOT:
+    raise ConfigError(
+        "没有设置 CHORUS_RVC_ROOT。\n"
+        "它是 RVC 整合包根目录，里面应该有 runtime\\python.exe、ffmpeg.exe、assets\\weights。\n"
+        "用法（PowerShell）：\n"
+        "    $env:CHORUS_RVC_ROOT = 'D:\\你的路径\\RVC20260718Nvidia50x0'\n"
+        "    python app.py\n"
+        "或者直接用仓库里的 scripts\\start.ps1（它读 CHORUS_RVC_ROOT，缺了会给出提示）。"
+    )
+
 RVC_APP = RVC_ROOT
 RVC_PYTHON = os.path.join(RVC_ROOT, "runtime", "python.exe")
 RVC_PORT = int(os.environ.get("CHORUS_RVC_PORT", "7897"))
@@ -54,6 +75,49 @@ NETEASE_PARSE = "https://www.hhlqilongzhu.cn/api/dg_wyymusic.php"
 def ensure_dirs():
     for path in (WORK_DIR, OUT_DIR, CACHE_DIR):
         os.makedirs(path, exist_ok=True)
+
+
+def check_paths():
+    """启动前的体检。返回问题列表，空列表表示一切就绪。
+
+    不在这里抛异常，方便 start.ps1 一次把问题全列出来，而不是改一个报一个。
+    """
+    problems = []
+
+    def need(label, path, kind="file"):
+        if kind == "file":
+            if not os.path.isfile(path):
+                problems.append("缺 %s：%s" % (label, path))
+        elif not os.path.isdir(path):
+            problems.append("缺 %s：%s" % (label, path))
+
+    if not os.path.isdir(RVC_ROOT):
+        problems.append("CHORUS_RVC_ROOT 指向的目录不存在：%s" % RVC_ROOT)
+        return problems
+
+    need("RVC 运行时 python", RVC_PYTHON)
+    need("ffmpeg", FFMPEG)
+    need("模型目录 assets\\weights", WEIGHTS_DIR, kind="dir")
+    need("rubberband.exe", RUBBERBAND)
+
+    dll = os.path.join(os.path.dirname(RUBBERBAND), "sndfile.dll")
+    if os.path.isfile(RUBBERBAND) and not os.path.isfile(dll):
+        problems.append(
+            "rubberband 缺依赖库，会把 sndfile.dll 一起放进 %s（跑 scripts\\fetch_rubberband.ps1）"
+            % os.path.dirname(RUBBERBAND)
+        )
+
+    models = []
+    if os.path.isdir(WEIGHTS_DIR):
+        models = [n for n in os.listdir(WEIGHTS_DIR) if n.lower().endswith(".pth")]
+        if not models:
+            problems.append("assets\\weights 里没有 .pth 模型")
+
+    libs_web = os.path.join(HOME, "libs_web", "gradio")
+    if not os.path.isdir(libs_web):
+        problems.append("缺 libs_web（pip install --target libs_web -r requirements.txt）")
+
+    return problems
 
 
 for _d in (WORK_DIR, OUT_DIR, CACHE_DIR):

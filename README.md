@@ -49,12 +49,44 @@ gradio_client 2.x 读到 `protocol: ws` 会直接抛 `Unknown protocol: ws`；0.
 
 ## 启动
 
+先设置 RVC 整合包路径（代码里不写死任何本机路径）：
+
 ```bat
-C:\Users\21903\AppData\Local\Programs\Python\Python312\python.exe -X utf8 app.py
+set CHORUS_RVC_ROOT=D:\你的路径\RVC20260718Nvidia50x0
+python -X utf8 app.py
+```
+
+或者直接用脚本，它会做体检、拉起服务、等端口就绪：
+
+```bat
+powershell -ExecutionPolicy Bypass -File scripts\start.ps1          :: 启动
+powershell -ExecutionPolicy Bypass -File scripts\start.ps1 -Status  :: 看状态
+powershell -ExecutionPolicy Bypass -File scripts\start.ps1 -Stop    :: 停掉
 ```
 
 跑 `app.py` 的 Python 只要 3.12 + 能 import `libs_web` 里的东西即可；RVC 相关的重活都在
-`config.RVC_PYTHON`（整合包自带运行时）里跑。端口用 `CHORUS_PORT` 覆盖，默认 3333。
+`config.RVC_PYTHON`（整合包自带运行时）里跑。环境变量一览：
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `CHORUS_RVC_ROOT` | 无，**必填** | RVC 整合包根目录 |
+| `CHORUS_PYTHON` | PATH 里的 python | 跑服务端的解释器（start.ps1 用） |
+| `CHORUS_PORT` | 3333 | 监听端口 |
+| `CHORUS_HOST` | 127.0.0.1 | 监听地址 |
+| `CHORUS_RUBBERBAND` | `bin\rubberband.exe` | 想用系统装的 rubberband 就指过去 |
+| `CHORUS_RVC_PORT` | 7897 | RVC WebUI 端口 |
+| `CHORUS_SEP_MODEL` / `CHORUS_DEREVERB_MODEL` | 去伴奏 / 去混响 | 分离模型标签 |
+| `CHORUS_F0` / `CHORUS_INDEX_RATE` / `CHORUS_RMS_MIX` / `CHORUS_PROTECT` | rmvpe / 0.75 / 0.35 / 0.33 | 推理参数 |
+| `CHORUS_SECONDS` | 45 | 副歌截取秒数 |
+
+启动前会跑 `config.check_paths()`，缺 runtime / ffmpeg / 模型目录 / rubberband+dl 会一次列全并退出，
+不会带着半个环境跑到一半再炸。
+
+## 和 AstrBot 一起开机
+
+`D:\QQBOT\启动\start.ps1`（用户自己的启动器）里加了一段：AstrBot 起来后检查 3333，
+没监听就用 `CHORUS_RVC_ROOT` + `NO_PROXY` 拉起本服务，并把 `-Status` / `-Stop` 也接上了。
+本仓库只负责中间层自己，启动器那边是用户侧配置。
 
 ## 接口
 

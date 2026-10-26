@@ -1,4 +1,4 @@
-# 下载 Rubber Band Library 4.0.0 的 Windows 可执行文件到 bin/
+﻿# 下载 Rubber Band Library 4.0.0 的 Windows 可执行文件到 bin/
 # 用法：powershell -ExecutionPolicy Bypass -File scripts\fetch_rubberband.ps1
 #
 # 为什么单独下：rubberband 是 GPL，二进制不随本仓库分发；
