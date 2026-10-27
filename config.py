@@ -11,7 +11,7 @@ import os
 HOME = os.path.dirname(os.path.abspath(__file__))
 
 # 服务版本（和 CHANGELOG / README 对齐），启动日志与 /cache_info 都会带出来
-VERSION = "0.8.1"
+VERSION = "0.9.0"
 
 
 class ConfigError(RuntimeError):
@@ -38,7 +38,13 @@ RVC_BOOT_TIMEOUT = int(os.environ.get("CHORUS_RVC_BOOT_TIMEOUT", "180"))
 FFMPEG = os.path.join(RVC_ROOT, "ffmpeg.exe")
 FFPROBE = os.path.join(RVC_ROOT, "ffprobe.exe")
 
-WEIGHTS_DIR = os.path.join(RVC_ROOT, "assets", "weights")
+WEIGHTS_DIR = os.environ.get("CHORUS_WEIGHTS_DIR") or os.path.join(
+    RVC_ROOT, "assets", "weights"
+)
+# 这个目录是怎么来的：环境变量 / 默认。给 /model_info 和启动日志用，方便排查
+WEIGHTS_DIR_SOURCE = (
+    "CHORUS_WEIGHTS_DIR" if os.environ.get("CHORUS_WEIGHTS_DIR") else "默认（RVC 整合包的 assets\\weights）"
+)
 INDEX_DIRS = [
     os.path.join(RVC_ROOT, "assets", "indices"),
     os.path.join(RVC_ROOT, "indices"),
@@ -127,7 +133,7 @@ def check_paths():
 
     need("RVC 运行时 python", RVC_PYTHON)
     need("ffmpeg", FFMPEG)
-    need("模型目录 assets\\weights", WEIGHTS_DIR, kind="dir")
+    need("模型目录（%s）" % WEIGHTS_DIR_SOURCE, WEIGHTS_DIR, kind="dir")
     need("rubberband.exe", RUBBERBAND)
 
     dll = os.path.join(os.path.dirname(RUBBERBAND), "sndfile.dll")

@@ -3,7 +3,7 @@
 RVC 翻唱中间层，给 AstrBot 的翻唱插件当后端用：
 丢一首歌进去，出来一段翻唱成品（默认 45 秒副歌，也可以自定长度或整首翻唱）。
 
-当前版本：`0.8.1`（0.8.0 打通了推理与混音参数；0.8.1 加了显存保护和失败原因透传，见「显存保护」）。
+当前版本：`0.9.0`（0.8.0 打通了推理与混音参数；0.8.1 加了显存保护；0.9.0 补上音色模型目录 `/model_info` 与 `CHORUS_WEIGHTS_DIR`）。
 
 默认后端插件是自维护分支 `astrbot_plugin_chorus_cover`（也可接上游 `astrbot_plugin_matsuko_cover`，
 接口签名一致）。
@@ -167,6 +167,7 @@ powershell -ExecutionPolicy Bypass -File scripts\start.ps1 -Stop    :: 停掉
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
 | `CHORUS_RVC_ROOT` | 无，**必填** | RVC 整合包根目录 |
+| `CHORUS_WEIGHTS_DIR` | `<RVC_RVC_ROOT>\assets\weights` | 音色模型目录（0.9.0）。改这里要重启中间层；启动时会把它作为 `weight_root` 传给 RVC 子进程 |
 | `CHORUS_PYTHON` | PATH 里的 python | 跑服务端的解释器（start.ps1 用） |
 | `CHORUS_PORT` | 3333 | 监听端口 |
 | `CHORUS_HOST` | 127.0.0.1 | 监听地址 |
@@ -198,9 +199,36 @@ SnowLuma 收尾；本仓库只负责中间层自己，启动器那边是用户�
 | api_name | 说明 |
 | --- | --- |
 | `/convert` | 主入口，29 个参数，按名字传 kwargs，返回 `(音频文件, "true"/"false" 是否命中缓存)` |
-| `/show_model` | 列出 `assets\weights` 里的模型（返回 list） |
+| `/show_model` | 列出音色模型目录里的 `.pth`（返回 list） |
+| `/model_info` | **0.9.0 新增**：音色模型目录自检，返回目录、数量、模型清单与告警（见下） |
 | `/show_msst_models` / `/select_msst_model` | 分离模型列表与切换 |
 | `/cache_info` / `/clear_cache` | 缓存统计与清理 |
+
+### 音色模型目录（0.9.0）
+
+默认目录是 RVC 整合包的 `assets\weights`。想换地方就设环境变量 `CHORUS_WEIGHTS_DIR`，
+启动时会把该路径作为 `weight_root` 传给 RVC 子进程——RVC 的 `get_vc()` 拼的是
+`f'{os.getenv("weight_root")}/{模型名}'`，不传这个变量换目录是不生效的。
+
+`/model_info` 入参只有 `models_dir`（可选，用来核对另一个目录），返回：
+
+```json
+{
+  "dir": "D:\\...\\assets\\weights",
+  "backend_dir": "D:\\...\\assets\\weights",
+  "source": "默认（RVC 整合包的 assets\\weights）",
+  "exists": true,
+  "count": 8,
+  "models": ["ainuo.pth", "..."],
+  "matches_backend": true,
+  "rvc_port": 7897,
+  "rvc_running": true,
+  "index_dirs": ["D:\\...\\assets\\indices"],
+  "warning": "（只在目录不存在 / 没有 .pth / 和 backend_dir 不一致时出现）"
+}
+```
+
+插件 0.11.0 的 `/刷新rvc模型` 就是拿这个接口回显「模型文件夹 + 数量」的。
 
 `/convert` 参数名和原中间层完全一致（`song_name_src, key_shift, vocal_vol, inst_vol,
 model_dropdown, reverb_intensity, delay_intensity, f0_method, index_rate, filter_radius,

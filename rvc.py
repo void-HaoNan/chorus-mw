@@ -113,15 +113,23 @@ def _port_open(port):
 
 
 def ensure_rvc():
-    """RVC WebUI 没起来就拉起来。返回端口。"""
+    """RVC WebUI 没起来就拉起来。返回端口。
+
+    0.9.0 起把 ``weight_root`` 显式传给子进程：RVC 的 ``get_vc()`` 拼路径用的是
+    ``f'{os.getenv("weight_root")}/{模型名}'``，只有让它跟 ``config.WEIGHTS_DIR``
+    一致，换模型目录（``CHORUS_WEIGHTS_DIR``）才真的生效。
+    """
     if _port_open(config.RVC_PORT):
         return config.RVC_PORT
     creation = 0
     if os.name == "nt":
         creation = subprocess.CREATE_NEW_PROCESS_GROUP | 0x00000008
+    child_env = dict(os.environ)
+    child_env["weight_root"] = config.WEIGHTS_DIR
     subprocess.Popen(
         [config.RVC_PYTHON, "webui.py", "--port", str(config.RVC_PORT), "--noautoopen"],
         cwd=config.RVC_APP,
+        env=child_env,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         creationflags=creation,
@@ -538,11 +546,52 @@ def convert(vocal_path, model_name, key_shift, f0_method, index_rate,
     return str(audio)
 
 
-def list_models():
-    directory = config.WEIGHTS_DIR
-    if not os.path.isdir(directory):
+def list_models(directory=None):
+    """列出音色模型（.pth）。directory 为空就用 config.WEIGHTS_DIR。"""
+    target = os.path.abspath(directory) if directory else config.WEIGHTS_DIR
+    if not os.path.isdir(target):
         return []
     return sorted(
-        name for name in os.listdir(directory)
+        name for name in os.listdir(target)
         if name.lower().endswith(".pth")
     )
+
+
+def model_info(directory=None):
+    """告诉调用方「模型到底放在哪」（0.9.0）。
+
+    插件设置页 / 刷新命令靠这个接口显示真实目录，而不是靠猜。
+    传 ``directory`` 只是**核对**另一个目录有没有模型，不会让 RVC 去那儿加载——
+    RVC 只认 ``weight_root``（= config.WEIGHTS_DIR），所以对不上时返回 warning。
+    """
+    requested = str(directory or "").strip()
+    default_dir = config.WEIGHTS_DIR
+    target = os.path.abspath(requested) if requested else default_dir
+    models = list_models(target if requested else None)
+    same_as_backend = os.path.normcase(os.path.abspath(target)) == os.path.normcase(
+        os.path.abspath(default_dir)
+    )
+    info = {
+        "dir": target,
+        "backend_dir": default_dir,
+        "source": config.WEIGHTS_DIR_SOURCE if not requested else "请求参数（仅核对）",
+        "exists": os.path.isdir(target),
+        "count": len(models),
+        "models": models,
+        "matches_backend": same_as_backend,
+        "rvc_port": config.RVC_PORT,
+        "rvc_running": _port_open(config.RVC_PORT),
+        "index_dirs": list(config.INDEX_DIRS),
+    }
+    if requested and not same_as_backend:
+        info["warning"] = (
+            "这个目录不是 RVC 正在用的模型目录（%s），RVC 不会从这里加载音色。"
+            "要让 RVC 用它，把中间层的 CHORUS_WEIGHTS_DIR 设成这个路径再重启中间层。"
+            % default_dir
+        )
+    elif not info["exists"]:
+        info["warning"] = "这个目录不存在：%s" % target
+    elif not models:
+        info["warning"] = "这个目录里没有 .pth 音色模型：%s" % target
+    return info
+

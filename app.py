@@ -251,6 +251,18 @@ def show_model():
     return rvc.list_models()
 
 
+def model_info(models_dir=""):
+    """模型目录自检（0.9.0）：插件设置页靠它显示「模型到底放哪」。
+
+    返回值里带绝对路径，所以只能走 JSON 包装（Gradio 4 会把存在的路径当成文件去下载）。
+    """
+    try:
+        return rvc.model_info(models_dir)
+    except Exception as error:
+        traceback.print_exc()
+        return {"error": str(error), "dir": config.WEIGHTS_DIR, "models": [], "count": 0}
+
+
 def cache_info():
     files, total = 0, 0
     for root in (config.CACHE_DIR, config.OUT_DIR):
@@ -385,6 +397,10 @@ def build():
         gr.Button("API Show MSST", visible=False).click(
             show_msst_models, inputs=[], outputs=[show_json], api_name="show_msst_models"
         )
+        model_dir_box = gr.Textbox(value="", visible=False, label="models_dir")
+        gr.Button("API Model Info", visible=False).click(
+            model_info, inputs=[model_dir_box], outputs=[show_json], api_name="model_info"
+        )
         msst_box = gr.Textbox(visible=False)
         gr.Button("API Select MSST", visible=False).click(
             select_msst_model, inputs=[msst_box], outputs=[show_json],
@@ -411,6 +427,11 @@ if __name__ == "__main__":
         raise SystemExit(2)
     print("chorus-mw %s 启动，RVC=%s 端口=%d" % (
         config.VERSION, config.RVC_ROOT, config.RVC_PORT), flush=True)
+    print(
+        "[chorus-mw] 音色模型目录=%s（来源：%s），共 %d 个 .pth；RVC 的 weight_root 会跟它保持一致"
+        % (config.WEIGHTS_DIR, config.WEIGHTS_DIR_SOURCE, len(rvc.list_models())),
+        flush=True,
+    )
     print(
         "[chorus-mw] 生效参数默认值 f0_method=%s index_rate=%.2f rms_mix_rate=%.2f "
         "protect=%.2f filter_radius=%d（暂未使用，RVC WebUI 本版无此入参） "

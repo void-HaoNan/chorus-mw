@@ -1,5 +1,30 @@
 # CHANGELOG
 
+## 0.9.0 — 2026-10-28
+
+**音色模型目录变成一等公民。** 以前 `assets\weights` 是写死的，插件设置页也没地方告诉
+用户「模型该放哪」，只能猜。
+
+### 变更
+
+- 新增环境变量 **`CHORUS_WEIGHTS_DIR`**：音色模型目录可换；不设就是
+  `<RVC>\assets\weights`。`config.WEIGHTS_DIR_SOURCE` 记录来源，启动日志和 `/model_info` 都会带出来。
+- `ensure_rvc()` 拉起 RVC 时把 `weight_root=<WEIGHTS_DIR>` 写进子进程环境：
+  RVC 的 `get_vc()` 拼路径用的是 `f'{os.getenv("weight_root")}/{模型名}'`，
+  不传这个变量，换目录只是「列表变了、加载还是老地方」。
+- 新增接口 **`/model_info`**（入参 `models_dir` 可选）：返回
+  `dir` / `backend_dir` / `source` / `exists` / `count` / `models` / `matches_backend` /
+  `rvc_port` / `rvc_running` / `index_dirs`，目录不存在、没有 `.pth`、或与后端目录不一致时带 `warning`。
+- `list_models(directory=None)` 支持指定目录；`/show_model` 行为不变（仍读当前目录）。
+- 启动日志多一行：`音色模型目录=…（来源：…），共 N 个 .pth；RVC 的 weight_root 会跟它保持一致`。
+- `check_paths()` 的模型目录检查改为按实际目录报错（带上来源）。
+
+### 实测
+
+- 本机默认目录 8 个 `.pth`，`/model_info` 返回 `matches_backend=true`。
+- 故意传 `assets\indices`：返回 `matches_backend=false` + 告警「这个目录不是 RVC 正在用的模型目录…」。
+- 版本 0.9.0 启动正常，`/convert` 29 参数不变，插件 0.10.1 无需改动即可继续用。
+
 ## 0.8.1 — 2026-10-28
 
 **显存保护 + 失败原因透传。** 0.8.0 及以前，一旦分离 OOM，插件只会报
