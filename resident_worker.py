@@ -23,6 +23,9 @@ import traceback
 HERE = os.path.dirname(os.path.abspath(__file__))
 # libs 里是 gradio_client 0.2.9，只能跟 RVC WebUI 的 Gradio 3.14（ws）说话
 sys.path.insert(0, os.path.join(HERE, "libs"))
+sys.path.insert(0, HERE)
+
+from sep_guard import audio_files, failure_reason  # noqa: E402
 
 # 协议通道单独留出来，之后所有 print / 第三方输出都落到 stderr
 _REAL_STDOUT = sys.stdout
@@ -65,9 +68,16 @@ def _pymss(label, input_path, vocal_dir, inst_dir, fmt):
 
     os.makedirs(vocal_dir, exist_ok=True)
     os.makedirs(inst_dir, exist_ok=True)
+    before = audio_files(vocal_dir) | audio_files(inst_dir)
     last = ""
     for info in pymss_separate(label, "", vocal_dir, [input_path], inst_dir, fmt):
         last = info or last
+
+    # pymss_separate 把异常吞成文字，只能靠「有没有新增产物」判断成败（0.8.1）
+    produced = (audio_files(vocal_dir) | audio_files(inst_dir)) - before
+    if not produced:
+        raise RuntimeError(failure_reason(last, vocal_dir, inst_dir))
+
     return {"message": str(last).strip().splitlines()[-1][:200] if str(last).strip() else ""}
 
 

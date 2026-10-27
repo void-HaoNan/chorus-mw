@@ -3,7 +3,7 @@
 RVC 翻唱中间层，给 AstrBot 的翻唱插件当后端用：
 丢一首歌进去，出来一段翻唱成品（默认 45 秒副歌，也可以自定长度或整首翻唱）。
 
-当前版本：`0.8.0`（0.8.0 打通了推理与混音参数，见「音色与音量参数」）。
+当前版本：`0.8.1`（0.8.0 打通了推理与混音参数；0.8.1 加了显存保护和失败原因透传，见「显存保护」）。
 
 默认后端插件是自维护分支 `astrbot_plugin_chorus_cover`（也可接上游 `astrbot_plugin_matsuko_cover`，
 接口签名一致）。
@@ -18,6 +18,9 @@ RVC 翻唱中间层，给 AstrBot 的翻唱插件当后端用：
 0.8.0 起，插件设置里的 `f0_method` / `index_rate` / `rms_mix_rate` / `protect` /
 `inst_volume_db` / `vocal_volume_db` 会真的传进 RVC 和混音（不再写死默认值），
 细节和实测见下文「音色与音量参数」。
+
+0.8.1 起，分离前会看一眼空闲显存，真 OOM 了会换新进程重试一次，并且把
+「显存不足」的原文透给插件，不再含糊地报「分离没有产出人声」。见「显存保护」。
 
 ## 目录
 
@@ -104,6 +107,30 @@ gradio_client 2.x 读到 `protocol: ws` 会直接抛 `Unknown protocol: ws`；0.
   显存紧就设 `CHORUS_RESIDENT=0` 退回每次起进程。
 
 
+## 显存保护（0.8.1）
+
+8 GB 卡上这套东西很容易把显存顶满：常驻程序（GPT-SoVITS 2.0 GB、RVC WebUI 0.8 GB、
+NVIDIA Broadcast + MediaSDK 0.6 GB、QQ/浏览器/ToDesk 等）平时就占着 5.8 GB，
+而 PyMSS 分离峰值还要再吃 1.6 GB 左右，实测峰值 **7.39 / 8.15 GB**。差一点就会 OOM。
+
+0.8.1 做了三件事：
+
+| 机制 | 行为 | 相关配置 |
+| --- | --- | --- |
+| 分离前预检 | 查 `nvidia-smi` 的空闲显存，低于阈值就先等，并把「显存只剩 XXXMB」通过进度报给插件 | `CHORUS_VRAM_MIN_FREE_MB`（默认 1800）、`CHORUS_VRAM_WAIT_SECONDS`（默认 10） |
+| OOM 自动重试 | 失败信息里认出 OOM 后，等几秒换**全新进程**重跑一次（常驻进程 OOM 后 CUDA 上下文可能已坏） | `CHORUS_OOM_RETRY_WAIT_SECONDS`（默认 3） |
+| 失败原因透传 | 报「显存不足（…）现在空闲 XXXMB + 原始 OOM 原文」，而不是「分离没有产出人声」 | — |
+
+日志里能对上三行：`vram free=...`、`worker=<resident|process> failed op=... reason=...`、
+`oom op=... free=...MB，Ns 后换新进程重试一次`。
+
+查不到显存（没独显、驱动异常、`nvidia-smi` 不在 PATH）时预检直接放行，不会挡住正常唱歌；
+等 10 秒还是不够也照样往下跑——真正缺显存时由重试 + 明确报错兜底，而不是无限等。
+
+**给用户的话**：OOM 时先关 OBS / 直播伴侣 / NVIDIA Broadcast，或者临时停掉 GPT-SoVITS
+（它一个人占 2 GB），再重试；不用重启 AstrBot。
+
+
 ## 依赖
 
 | 依赖 | 位置 | 说明 |
@@ -152,6 +179,9 @@ powershell -ExecutionPolicy Bypass -File scripts\start.ps1 -Stop    :: 停掉
 | `CHORUS_SECONDS` | 45 | 默认翻唱秒数（调用方不传 `chorus_seconds` 时用） |
 | `CHORUS_MARGIN_SECONDS` | 15 | 先切后分离的余量：候选窗口 = 目标时长 + 这么多秒 |
 | `CHORUS_RESIDENT` | 1 | 设为 `0` 关掉常驻 worker，退回每次起进程（省显存、但慢 10~15 秒） |
+| `CHORUS_VRAM_MIN_FREE_MB` | 1800 | 分离前预检的空闲显存下限（MB）；本机常驻程序占得多，定太高会每首歌白等 |
+| `CHORUS_VRAM_WAIT_SECONDS` | 10 | 显存不够时最多等多少秒；等不到也继续跑 |
+| `CHORUS_OOM_RETRY_WAIT_SECONDS` | 3 | 真 OOM 后等几秒再换新进程重试一次 |
 
 启动前会跑 `config.check_paths()`，缺 runtime / ffmpeg / 模型目录 / rubberband+dl 会一次列全并退出，
 不会带着半个环境跑到一半再炸。
@@ -219,6 +249,9 @@ python tools\check_plugin_compat.py
 - **第一步就慢/每次 3~5 秒白等**：看 `_work\mw.log` 里是不是 `worker=process`；如果常驻 worker 没起来（`_work\resident.log` 有 traceback），会用旧路兜底，功能不受影响，只是慢。检查 `config.RVC_PYTHON` 能否跑 `resident_worker.py`。
 - **变声报 `NoneType has no attribute pipeline`**：模型没加载。`rvc_worker.py` 每次都会先调 `/infer_change_voice` 预热，正常碰不到。
 - **同一首歌重复跑**：命中 `cache/` 直接返回；改 `key_shift`、模型、`render_mode`/时长、`f0_method`、`index_rate`、`rms_mix_rate`、`protect`、`inst_volume_db`、`vocal_volume_db` 任意一项都会换 key，重新跑。
+- **报「分离没有产出人声：…\sep_vocal」**：这是 0.8.0 及以前的含糊说法，真正常见的原因是
+  **显存不足**（RVC 的 `pymss_separate` 会把异常吞成文字，旧代码看不出来）。升 0.8.1 后会直接说
+  「显存不足（CUDA out of memory）」并带原始 OOM 原文；按提示关掉 OBS/直播/Broadcast 或停 GPT-SoVITS 再重试。
 - **WebUI 里有人在用**：不行。RVC 单实例、有全局状态，中间层在跑的时候别在 WebUI 上手动操作。
 - **同时开了两个中间层 / 两个客户端抢 7897**：RVC WebUI 用一份全局模型状态，两边交替调 `/infer_change_voice`
   会互相把 pipeline 换掉，可能收到一个空错误（`ValueError:` 后面什么都没有）。同一时间只跑一个中间层；

@@ -47,9 +47,12 @@ def main():
 
     from tools.pymss_webui import pymss_separate  # noqa: E402
 
+    from sep_guard import audio_files, failure_reason  # noqa: E402
+
     os.makedirs(args.vocal, exist_ok=True)
     os.makedirs(args.inst, exist_ok=True)
 
+    before = audio_files(args.vocal) | audio_files(args.inst)
     last = ""
     for info in pymss_separate(
         label, "", args.vocal, [args.input], args.inst, args.fmt
@@ -58,6 +61,13 @@ def main():
         lines = str(last).strip().splitlines()
         if lines:
             print(lines[-1][:200], flush=True)
+
+    # pymss_separate 不抛异常，失败也会走到这里（0.8.1）
+    produced = (audio_files(args.vocal) | audio_files(args.inst)) - before
+    if not produced:
+        print("WORKER_FAILED: %s" % failure_reason(last, args.vocal, args.inst), flush=True)
+        sys.exit(1)
+
     print("WORKER_DONE", flush=True)
 
 

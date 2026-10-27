@@ -11,7 +11,7 @@ import os
 HOME = os.path.dirname(os.path.abspath(__file__))
 
 # 服务版本（和 CHANGELOG / README 对齐），启动日志与 /cache_info 都会带出来
-VERSION = "0.8.0"
+VERSION = "0.8.1"
 
 
 class ConfigError(RuntimeError):
@@ -66,6 +66,15 @@ CHORUS_MARGIN_SECONDS = float(os.environ.get("CHORUS_MARGIN_SECONDS", "15"))
 RESIDENT_ENABLED = os.environ.get("CHORUS_RESIDENT", "1").strip().lower() not in (
     "0", "false", "off", "no",
 )
+
+# 显存保护（0.8.1）：分离峰值实测约 1.6GB，8G 卡上基线被常驻程序占掉 5.8G 时很容易顶爆。
+# 分离前先看一眼空闲显存，低于阈值就等一会儿（等不到也照样放行，不挡正常唱歌）；
+# 真 OOM 了自动换新进程重试一次。默认 1800MB / 10 秒，是因为这台机器常驻程序
+# 一直占着 5.8G、空闲本来就只有 2G 左右，阈值定太高会每首歌都白等。
+VRAM_MIN_FREE_MB = int(os.environ.get("CHORUS_VRAM_MIN_FREE_MB", "1800"))
+VRAM_WAIT_SECONDS = float(os.environ.get("CHORUS_VRAM_WAIT_SECONDS", "10"))
+VRAM_POLL_SECONDS = 2.0
+OOM_RETRY_WAIT_SECONDS = float(os.environ.get("CHORUS_OOM_RETRY_WAIT_SECONDS", "3"))
 
 # 分离模型（RVC WebUI 下拉框里的中文标签，不能改）
 # 2026-10-27 起默认走 Studio 那套：becruily_deux 分离 + anvuew 22.5050 去混响

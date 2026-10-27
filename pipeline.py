@@ -438,6 +438,11 @@ def run(song_name_src, key_shift=0, model_dropdown="", chorus_seconds=None,
 
     duration = probe_duration(source)
 
+    # 0.8.1：分离前先看显存。8G 卡上被 OBS / 直播 / GPT-SoVITS 占满时，
+    # 分离峰值（约 1.6GB）会顶爆，报出来的错还很难懂；这里先等一等再上。
+    report(6, "检查显存")
+    rvc.ensure_vram(notify=lambda text: report(7, text))
+
     if mode == "full":
         report(8, "整首人声分离中（完整翻唱，耗时明显更长）")
         vocals, instrumental = rvc.separate(

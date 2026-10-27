@@ -1,5 +1,45 @@
 # CHANGELOG
 
+## 0.8.1 — 2026-10-28
+
+**显存保护 + 失败原因透传。** 0.8.0 及以前，一旦分离 OOM，插件只会报
+「分离没有产出人声：…\sep_vocal」——用户看不出是显存不足，还白跑一次整首分离兜底。
+
+### 变更
+
+- 新增 `sep_guard.py`：RVC 的 `pymss_separate` 是生成器，**异常被它自己吞成文字、永不抛出**，
+  所以改成两条判断：输出目录里有没有**新增音频文件**（确定的成败证据）+
+  从输出文字里挑出 `OutOfMemoryError` / `没有找到可处理的音频文件` 那一行（给人看的理由）。
+- `resident_worker._pymss` 与 `sep_worker.py` 都用这套判断：没有新产物就抛 `RuntimeError` /
+  打印 `WORKER_FAILED` 并以非零退出，不再「什么都没做还回 ok=True」。
+- `rvc._run_task` 新增 **OOM 自动重试一次**：认出错因是 OOM 后等
+  `CHORUS_OOM_RETRY_WAIT_SECONDS`（默认 3 秒），换**全新进程**重跑——常驻进程 OOM 之后
+  CUDA 上下文可能已经坏了，同一个进程再试也是白搭。普通失败仍按老规矩退回进程模式。
+- 失败消息改成能行动的说法，例如：
+  「显存不足（去伴奏（becruily deux） 这一步 OOM，现在空闲 1997MB）。PyMSS 分离峰值要 1.6GB 左右，
+  8G 卡上被 OBS / 直播伴侣 / NVIDIA Broadcast / GPT-SoVITS 占住就会顶到 7.4G 以上。
+  关掉这些程序，或者先停 GPT-SoVITS（占 2GB）再重试。原始错误：…」
+  非 OOM 失败保留原文（截断到 600 字）。
+- `pipeline.run` 在分离前**预检显存**：`rvc.ensure_vram()` 读 `nvidia-smi`，空闲低于
+  `CHORUS_VRAM_MIN_FREE_MB`（默认 1800MB）就最多等 `CHORUS_VRAM_WAIT_SECONDS`（默认 10 秒），
+  并把「显存只剩 XXXMB」通过 `progress` 报给上层；查不到显存（无独显 / 驱动异常）直接放行。
+- 新增环境变量：`CHORUS_VRAM_MIN_FREE_MB`、`CHORUS_VRAM_WAIT_SECONDS`、
+  `CHORUS_OOM_RETRY_WAIT_SECONDS`。
+- 日志新增三类行：`vram free=…`、`worker=<resident|process> failed op=… reason=…`、
+  `oom op=… free=…MB，Ns 后换新进程重试一次`。
+
+### 实测（2026-10-28 01:57 那次真实失败）
+
+- 真因确认：`tools/pymss_core/modules/bs_roformer/bands.py::_get_packed_layer_group_params`
+  里 `torch.stack` 把所有频带权重再复制一份到 GPU 时 OOM；当时卡被占 5.8GB，分离峰值到 7.39/8.15GB。
+- 同一段 60 秒音频换独立进程重跑：**13.7 秒成功**，证明模型和环境没坏，是显存瞬时不够。
+- 新判定：把整份 `_work/resident.log` 喂给 `failure_reason()`，输出
+  「显存不足（CUDA out of memory），分离子进程被系统拒掉了 + 原始那一行」。
+- 坏输入（不存在的 wav）走 `_pymss`：现在抛 `RuntimeError: 找不到要分离的音频文件`，
+  旧写法会返回 `ok=True`。
+- 预检在当前 1999MB 空闲下判定 `ok（阈值 1800MB）`，不等待；把阈值临时提到 2500MB 时会等满
+  并把「显存只剩 …」报上去。
+
 ## 0.8.0 — 2026-10-27
 
 **参数打通**：0.7.0 之前 `/convert` 虽然收了 26 个参数，但 `pipeline` 里写死用
