@@ -1,5 +1,47 @@
 # CHANGELOG
 
+## 0.7.0 — 2026-10-27
+
+提速 + 「唱多长」三种模式。
+
+### 提速
+
+- **先切再分离（默认）**：整首混音上用能量包络挑「目标时长 + 15 秒」的候选窗口，
+  只切这一段去分离，再在分离出的人声里精挑最终段。三四分钟的歌不再整首过分离模型。
+  实测 4:39 的歌 **72.2 秒 → 32.6 秒**（副歌 45 秒模式）。
+- **常驻 worker**（`resident_worker.py`）：分离 / 去混响 / 变声共用一个常驻子进程，
+  stdin/stdout 一行一个 JSON。省掉每步重新 import（每次 3~5 秒，三步 10~15 秒）。
+  常驻进程没起来 / 崩溃 / 超时自动退回旧的 `sep_worker.py` / `rvc_worker.py`，
+  日志记 `worker=fallback`；`CHORUS_RESIDENT=0` 可整开关掉。
+- **并行**：分离完成后「去混响（人声）」与「伴奏切段 + 移调」用线程池同时跑。
+- 新增 `pipeline.probe_duration()`（ffprobe 量时长）、`CHORUS_MARGIN_SECONDS`（默认 15）。
+
+### 新增
+
+- **`render_mode` 参数**：`chorus`（默认，45 秒副歌）/ `custom`（`chorus_seconds`，20~180）/
+  `full`（整首翻唱，分离整首、变声整首，耗时可能是副歌模式的 5~10 倍、显存占用更高）。
+  已加进 `app.py` 的 `convert()` 形参和 `_hidden_inputs()`（label 同名，排在 `inst_volume_db` 之后）；
+  `/convert` 现在 26 个参数。
+- `chorus.pick_window()` 支持自定义 `min_seconds` / `max_seconds`（以前写死 40~50 秒，
+  自定义 30 秒或整首模式会被这组钳位改坏）。
+- 缓存 key 加入 `mode` 与目标时长：同一首歌 chorus / custom / full 不再互相命中。
+
+### 回退
+
+- 新顺序任何一步报错（切候选、分离、精挑）自动退回「整首分离再切」，日志 `fallback=full_separation`。
+
+### 实测（同一首 4:39 的 mp3，模型 Yuuka.pth，key_shift=0）
+
+| 场景 | 耗时 | 成品 |
+| --- | --- | --- |
+| 改前（0.6.0，整首分离） | 72.2 s | 44.45 s wav，峰值 -1.5 dB，平均 -16.1 dB |
+| `chorus`（45 s） | 32.6 s（HTTP 端到端 34.1 s） | 45.0 s wav，峰值 -1.5 dB，平均 -15.9 dB |
+| `custom` 30 s | 27.1 s（HTTP 端到端 27.9 s） | 30.8 s wav，峰值 -1.5 dB，平均 -15.8 dB |
+
+三段都过了 `py_compile`、ffprobe 时长与 `volumedetect` 峰值校验。
+`full` 模式拿 100 秒素材跑通：**52.7 秒**产出 100.0 秒整首 wav（峰值 -1.5 dB），
+长度涨到三四分钟时变声和分离都会继续变慢，所以插件侧默认仍是副歌模式。
+
 ## 0.6.0 — 2026-10-27
 
 ### 变更

@@ -53,9 +53,16 @@ LIBS_DIR = os.path.join(HOME, "libs")
 # 副歌截取
 CHORUS_SECONDS = float(os.environ.get("CHORUS_SECONDS", "45"))
 CHORUS_HOP = 0.5          # 候选窗口滑动步长（秒）
-CHORUS_MIN_SECONDS = 40.0  # 软切后允许的下限
+CHORUS_MIN_SECONDS = 40.0  # 软切后允许的下限（默认 45 秒模式，自定义模式会另算）
 CHORUS_MAX_SECONDS = 50.0  # 软切后允许的上限
 CHORUS_SNAP = 4.0          # 软切时在目标前后各找多少秒的换气点
+# 先切后分离时的余量：候选窗口 = 目标时长 + 这么多秒，留给人声里精挑和换气点吸附
+CHORUS_MARGIN_SECONDS = float(os.environ.get("CHORUS_MARGIN_SECONDS", "15"))
+
+# 常驻 worker（分离/去混响/变声共用一个进程，省掉每次 3~5 秒的导入）
+RESIDENT_ENABLED = os.environ.get("CHORUS_RESIDENT", "1").strip().lower() not in (
+    "0", "false", "off", "no",
+)
 
 # 分离模型（RVC WebUI 下拉框里的中文标签，不能改）
 # 2026-10-27 起默认走 Studio 那套：becruily_deux 分离 + anvuew 22.5050 去混响

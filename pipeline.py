@@ -1,4 +1,18 @@
-"""整条链路：拿到歌 → 整首分离 → 挑副歌 → 软切 → 去混响 → RVC → 混音 → 出成品。"""
+"""整条链路：拿到歌 → 先切一段 → 只分离这一段 → 精挑 → 去混响 ∥ 伴奏处理 → RVC → 混音。
+
+0.7.0 起的顺序（默认，收益最大）：
+1. 读整首音频，用能量包络在**整首混音**上挑一个候选副歌窗口
+   （目标长度 = 目标时长 + 15 秒余量，最长不超过整首）；
+2. 只把这个窗口切出来，送去做人声分离；
+3. 在分离出的人声里再精挑最终那段，切准；
+4. 去混响与「伴奏切段 + 移调」并行跑，然后变声、混音。
+
+以前是「整首分离 → 再切」，三四分钟的歌光分离就要二三十秒。现在只分离 60 秒左右。
+
+保留原来的整首分离路径：
+- ``render_mode=full`` 本来就要整首分离；
+- 新顺序任何一步报错 → 自动退回「整首分离再切」，日志里记 ``fallback=full_separation``。
+"""
 import hashlib
 import json
 import os
@@ -6,15 +20,25 @@ import re
 import shutil
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import config
 import chorus
 import rvc
 
 
+_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
+
+RENDER_MODES = ("chorus", "full", "custom")
+DEFAULT_RENDER_MODE = "chorus"
+CUSTOM_MIN_SECONDS = 20.0
+CUSTOM_MAX_SECONDS = 180.0
+
+
 def _run(cmd, timeout=600):
     proc = subprocess.run(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout,
+        creationflags=_NO_WINDOW,
     )
     if proc.returncode != 0:
         tail = proc.stderr.decode("utf-8", "ignore")[-800:]
@@ -79,6 +103,20 @@ def download_netease(keyword):
 
 
 # ---------------- 音频处理 ----------------
+
+def probe_duration(path):
+    """ffprobe 量时长；量不到返回 0（调用方按「不知道」处理）。"""
+    try:
+        proc = subprocess.run(
+            [config.FFPROBE, "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=nw=1:nk=1", path],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60,
+            creationflags=_NO_WINDOW,
+        )
+        return float(proc.stdout.decode("utf-8", "ignore").strip() or 0)
+    except Exception:
+        return 0.0
+
 
 def crop(src, dst, start, end):
     duration = max(0.5, float(end) - float(start))
@@ -145,6 +183,42 @@ def mix(vocal_path, inst_path, out_path, inst_volume_db=-2.0, shift_instrumental
     return out_path
 
 
+def _prepare_instrumental(inst_cut, work, semitones):
+    """伴奏切段已经在外面做完了，这里只负责移调（没有移调就直接用原文件）。"""
+    if abs(float(semitones or 0)) < 1e-6:
+        return inst_cut
+    dst = os.path.join(work, "chorus", "inst_shift.wav")
+    return pitch_shift(inst_cut, dst, semitones)
+
+
+# ---------------- 模式 ----------------
+
+def normalize_mode(value):
+    """chorus / full / custom，认中文别名；不认识的一律按 chorus。"""
+    mode = str(value or "").strip().lower()
+    aliases = {
+        "chorus": "chorus", "副歌": "chorus", "默认": "chorus",
+        "full": "full", "whole": "full", "整首": "full", "完整": "full",
+        "custom": "custom", "自定义": "custom",
+    }
+    return aliases.get(mode, DEFAULT_RENDER_MODE)
+
+
+def resolve_target_seconds(mode, chorus_seconds=None):
+    """返回目标翻唱时长；full 返回 0（表示整首）。"""
+    try:
+        seconds = float(chorus_seconds) if chorus_seconds not in (None, "") else 0.0
+    except (TypeError, ValueError):
+        seconds = 0.0
+    if mode == "full":
+        return 0.0
+    if mode == "custom":
+        base = seconds or config.CHORUS_SECONDS
+        return min(CUSTOM_MAX_SECONDS, max(CUSTOM_MIN_SECONDS, base))
+    base = seconds or config.CHORUS_SECONDS
+    return min(CUSTOM_MAX_SECONDS, max(CUSTOM_MIN_SECONDS, base))
+
+
 # ---------------- 缓存 ----------------
 
 def _fingerprint(path):
@@ -156,13 +230,16 @@ def _fingerprint(path):
 
 
 def cache_key(source, model, key_shift, extra):
+    extra = extra or {}
     payload = {
         "src": _fingerprint(source),
         "model": model,
         "shift": key_shift,
-        "chorus": config.CHORUS_SECONDS,
+        # 模式与目标时长必须进 key：同一首歌 chorus 和 full 是两个完全不同的成品
+        "mode": extra.get("mode", DEFAULT_RENDER_MODE),
+        "chorus": extra.get("target", config.CHORUS_SECONDS),
         "sep": config.SEP_MODEL,
-        "dereverb": config.DERERVERB_MODEL,
+        "dereverb": extra.get("dereverb", config.DERERVERB_MODEL),
         "index_rate": config.DEFAULT_INDEX_RATE,
         "extra": extra,
     }
@@ -191,12 +268,100 @@ def cache_store(key, audio, meta):
         json.dump({"audio": audio, "meta": meta, "at": int(time.time())}, f, ensure_ascii=False)
 
 
+# ---------------- 挑窗口 ----------------
+
+def _pick_on_mix(source, chorus_dir, want, minimum):
+    """在整首混音上挑候选窗口。soundfile 读不了（m4a 等）就转码后再挑。"""
+    want = max(1.0, float(want))
+    minimum = min(float(minimum), want)
+    try:
+        return chorus.pick_window(source, want, min_seconds=minimum, max_seconds=want)
+    except Exception as error:
+        print("[chorus-mw] mix envelope failed (%s)，改用 ffmpeg 解码后挑" % error, flush=True)
+        probe = os.path.join(chorus_dir, "mix_probe.wav")
+        _run([
+            config.FFMPEG, "-y", "-v", "error", "-i", source,
+            "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", probe,
+        ], timeout=300)
+        return chorus.pick_window(probe, want, min_seconds=minimum, max_seconds=want)
+
+
+def _window_limits(target, available):
+    """精挑时允许的长度区间：±3 秒，别让换气点吸附把 45 秒切成 38 秒。"""
+    min_keep = max(5.0, min(float(target) * 0.85, float(available)))
+    max_keep = max(min_keep, min(float(available), float(target) + 3.0))
+    return min_keep, max_keep
+
+
+def _prepare_window(source, work, target, duration):
+    """新顺序：整首混音挑候选 → 只切这一段 → 只分离这一段 → 人声里精挑。"""
+    chorus_dir = os.path.join(work, "chorus")
+    sep_vocal = os.path.join(work, "sep_vocal")
+    sep_inst = os.path.join(work, "sep_inst")
+
+    cut_start, cut_end = 0.0, duration
+    candidate = source
+    margin = float(config.CHORUS_MARGIN_SECONDS)
+    if duration and duration > target + margin + 1.0:
+        want = target + margin
+        cut_start, cut_end = _pick_on_mix(source, chorus_dir, want, minimum=target + 2.0)
+        candidate = crop(source, os.path.join(chorus_dir, "candidate.wav"), cut_start, cut_end)
+    span = max(0.5, float(cut_end) - float(cut_start))
+
+    vocals, instrumental = rvc.separate(candidate, sep_vocal, sep_inst, config.SEP_MODEL)
+    if not instrumental:
+        raise RuntimeError("分离没有产出伴奏，无法混音")
+
+    min_keep, max_keep = _window_limits(target, span)
+    local_start, local_end = chorus.pick_window(
+        vocals, target, min_seconds=min_keep, max_seconds=max_keep
+    )
+    vocal_cut = crop(vocals, os.path.join(chorus_dir, "vocal_cut.wav"), local_start, local_end)
+    inst_cut = crop(instrumental, os.path.join(chorus_dir, "inst_cut.wav"), local_start, local_end)
+    return {
+        "vocal": vocal_cut,
+        "inst": inst_cut,
+        "start": round(cut_start + local_start, 2),
+        "end": round(cut_start + local_end, 2),
+        "sep_span": round(span, 2),
+    }
+
+
+def _prepare_full(source, work, target):
+    """旧顺序（兜底 / full 模式）：整首分离，再挑副歌。"""
+    chorus_dir = os.path.join(work, "chorus")
+    vocals, instrumental = rvc.separate(
+        source,
+        os.path.join(work, "sep_vocal_full"),
+        os.path.join(work, "sep_inst_full"),
+        config.SEP_MODEL,
+    )
+    if not instrumental:
+        raise RuntimeError("分离没有产出伴奏，无法混音")
+    duration = probe_duration(vocals) or 0.0
+    min_keep, max_keep = _window_limits(target, duration or target)
+    start, end = chorus.pick_window(vocals, target, min_seconds=min_keep, max_seconds=max_keep)
+    return {
+        "vocal": crop(vocals, os.path.join(chorus_dir, "vocal_cut.wav"), start, end),
+        "inst": crop(instrumental, os.path.join(chorus_dir, "inst_cut.wav"), start, end),
+        "start": round(start, 2),
+        "end": round(end, 2),
+        "sep_span": round(duration, 2),
+    }
+
+
 # ---------------- 主流程 ----------------
 
 def run(song_name_src, key_shift=0, model_dropdown="", chorus_seconds=None,
         dereverb_model=None, inst_volume_db=-2.0, shift_instrumental=None,
-        progress=None, use_cache=True):
-    """返回 (输出音频路径, 是否命中缓存, 说明文本)。"""
+        progress=None, use_cache=True, render_mode=DEFAULT_RENDER_MODE):
+    """返回 (输出音频路径, 是否命中缓存, 说明文本)。
+
+    render_mode:
+        chorus —— 默认，副歌片段（默认 45 秒，先切 60 秒去分离）
+        full   —— 整首翻唱（分离整首、变声整首，耗时可能是副歌模式的 5~10 倍）
+        custom —— 自定义时长，用 chorus_seconds（20~180），同样先切（时长 + 15 秒）
+    """
     def report(pct, text):
         if progress is not None:
             try:
@@ -205,12 +370,17 @@ def run(song_name_src, key_shift=0, model_dropdown="", chorus_seconds=None,
                 pass
 
     started = time.time()
+    mode = normalize_mode(render_mode)
+    target = resolve_target_seconds(mode, chorus_seconds)
     source = resolve_source(song_name_src)
     report(4, "音频就位：%s" % os.path.basename(source))
 
     model = model_dropdown or _default_model()
     dereverb_label = dereverb_model or config.DERERVERB_MODEL
-    key = cache_key(source, model, key_shift, {"dereverb": dereverb_label})
+    if shift_instrumental is None:
+        shift_instrumental = float(key_shift)
+    extra = {"dereverb": dereverb_label, "mode": mode, "target": round(target, 2)}
+    key = cache_key(source, model, key_shift, extra)
     if use_cache:
         hit = cache_lookup(key)
         if hit:
@@ -219,71 +389,101 @@ def run(song_name_src, key_shift=0, model_dropdown="", chorus_seconds=None,
 
     token = "%s_%d" % (key, int(started))
     work = os.path.join(config.WORK_DIR, token)
-    for sub in ("sep_vocal", "sep_inst", "dereverb", "chorus", "out"):
+    for sub in ("sep_vocal", "sep_inst", "sep_vocal_full", "sep_inst_full",
+                "dereverb", "chorus", "out"):
         os.makedirs(os.path.join(work, sub), exist_ok=True)
 
-    # 1) 整首分离
-    report(8, "整首人声分离中")
-    vocals, instrumental = rvc.separate(
-        source,
-        os.path.join(work, "sep_vocal"),
-        os.path.join(work, "sep_inst"),
-        config.SEP_MODEL,
-    )
-    if not instrumental:
-        raise RuntimeError("分离没有产出伴奏，无法混音")
-    report(45, "分离完成，正在挑副歌")
+    def mark(name):
+        elapsed = time.time() - started
+        print("[chorus-mw] mode=%s step=%s elapsed=%.1fs" % (mode, name, elapsed), flush=True)
 
-    # 2) 挑副歌 + 软切
-    start, end = chorus.pick_window(vocals, chorus_seconds)
-    report(52, chorus.describe(vocals, start, end))
+    duration = probe_duration(source)
 
-    vocal_cut = crop(vocals, os.path.join(work, "chorus", "vocal_cut.wav"), start, end)
-    inst_cut = crop(instrumental, os.path.join(work, "chorus", "inst_cut.wav"), start, end)
+    if mode == "full":
+        report(8, "整首人声分离中（完整翻唱，耗时明显更长）")
+        vocals, instrumental = rvc.separate(
+            source,
+            os.path.join(work, "sep_vocal_full"),
+            os.path.join(work, "sep_inst_full"),
+            config.SEP_MODEL,
+        )
+        if not instrumental:
+            raise RuntimeError("分离没有产出伴奏，无法混音")
+        mark("separate")
+        vocal_cut, inst_cut = vocals, instrumental
+        window = {"start": 0.0, "end": round(duration or probe_duration(vocals), 2),
+                  "sep_span": round(duration, 2)}
+        report(45, "整首分离完成，开始去混响与变声")
+    else:
+        report(8, "在整首混音上挑候选副歌")
+        try:
+            window = _prepare_window(source, work, target, duration)
+        except Exception as error:
+            print("[chorus-mw] fallback=full_separation reason=%s" % error, flush=True)
+            report(12, "先切后分离失败，回退整首分离")
+            window = _prepare_full(source, work, target)
+        vocal_cut, inst_cut = window["vocal"], window["inst"]
+        mark("separate")
+        report(52, "分离了 %.1fs，窗口 %.1fs-%.1fs" % (
+            window.get("sep_span", 0), window["start"], window["end"]))
+        print("[chorus-mw] window=%.1fs-%.1fs sep_span=%.1fs" % (
+            window["start"], window["end"], window.get("sep_span", 0)), flush=True)
 
-    # 3) 去混响
-    report(58, "去混响（%s）" % dereverb_label)
-    clean_vocal = rvc.dereverb(
-        vocal_cut,
-        os.path.join(work, "dereverb", "vocal"),
-        os.path.join(work, "dereverb", "rest"),
-        dereverb_label,
-    )
-    report(70, "去混响完成，开始变声")
+    # 并行：伴奏切段+移调（CPU / rubberband）与去混响（GPU）同时开跑
+    executor = ThreadPoolExecutor(max_workers=1)
+    try:
+        inst_future = executor.submit(_prepare_instrumental, inst_cut, work, shift_instrumental)
+        report(58, "去混响（%s）" % dereverb_label)
+        clean_vocal = rvc.dereverb(
+            vocal_cut,
+            os.path.join(work, "dereverb", "vocal"),
+            os.path.join(work, "dereverb", "rest"),
+            dereverb_label,
+        )
+        mark("dereverb")
+        report(70, "去混响完成，开始变声")
+        converted = rvc.convert(
+            clean_vocal,
+            model,
+            key_shift,
+            config.DEFAULT_F0,
+            config.DEFAULT_INDEX_RATE,
+            config.DEFAULT_RMS_MIX,
+            config.DEFAULT_PROTECT,
+        )
+        mark("convert")
+        shifted_inst = inst_future.result()
+        mark("inst_prep")
+    finally:
+        executor.shutdown(wait=True)
 
-    # 4) RVC 变声
-    converted = rvc.convert(
-        clean_vocal,
-        model,
-        key_shift,
-        config.DEFAULT_F0,
-        config.DEFAULT_INDEX_RATE,
-        config.DEFAULT_RMS_MIX,
-        config.DEFAULT_PROTECT,
-    )
     report(88, "变声完成，混音中")
-
-    # 5) 混音
-    if shift_instrumental is None:
-        shift_instrumental = float(key_shift)
     final = os.path.join(
         config.OUT_DIR,
         "%s_%s_%s.wav" % (_safe(os.path.splitext(os.path.basename(source))[0], 40),
                           _safe(os.path.splitext(model)[0], 20), token[-6:]),
     )
-    mix(converted, inst_cut, final, inst_volume_db, shift_instrumental)
+    mix(converted, shifted_inst, final, inst_volume_db, 0.0)
 
+    total = round(time.time() - started, 1)
     meta = {
         "source": source,
         "model": model,
         "key_shift": key_shift,
-        "chorus": [start, end],
-        "seconds": round(time.time() - started, 1),
+        "mode": mode,
+        "target": round(target, 1),
+        "chorus": [window["start"], window["end"]],
+        "sep_span": window.get("sep_span", 0),
+        "seconds": total,
     }
     cache_store(key, final, meta)
+    print("[chorus-mw] done mode=%s target=%.1fs seped=%.1fs window=%.1fs-%.1fs total=%.1fs" % (
+        mode, target, window.get("sep_span", 0), window["start"], window["end"], total), flush=True)
     report(100, "完成")
     shutil.rmtree(work, ignore_errors=True)
-    return final, False, "副歌 %.1fs-%.1fs，耗时 %.1fs" % (start, end, meta["seconds"])
+    note = "模式 %s，窗口 %.1fs-%.1fs，耗时 %.1fs" % (
+        mode, window["start"], window["end"], total)
+    return final, False, note
 
 
 def _default_model():

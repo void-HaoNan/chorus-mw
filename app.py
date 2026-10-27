@@ -136,12 +136,20 @@ def convert(
     chorus_seconds=None,
     dereverb_model=None,
     inst_volume_db=-6.0,
+    render_mode="chorus",
     progress=None,
 ):
-    """兼容原中间层签名的入口。多出来的三个参数本机自用，插件不传也有默认值。"""
+    """兼容原中间层签名的入口。
+
+    render_mode（0.7.0 新增）：
+        chorus —— 默认，副歌片段，默认 45 秒，切 60 秒去分离
+        full   —— 整首翻唱，分离整首、变声整首；耗时可能是副歌模式的 5~10 倍，显存占用更高
+        custom —— 自定义时长，用 chorus_seconds（20~180），同样先切（时长 + 15 秒）再分离
+    """
     try:
         shift = int(key_shift or 0)
         inst_gain = float(inst_volume_db if inst_volume_db not in (None, "") else -6.0)
+        mode = pipeline.normalize_mode(render_mode)
         audio, cache_hit, _note = pipeline.run(
             song_name_src,
             key_shift=shift,
@@ -151,6 +159,7 @@ def convert(
             inst_volume_db=inst_gain,
             shift_instrumental=shift if shift_accompaniment else 0.0,
             progress=progress,
+            render_mode=mode,
         )
         return audio, "true" if cache_hit else "false"
     except Exception as error:
@@ -256,14 +265,20 @@ def _hidden_inputs():
         gr.Number(label="chorus_seconds", value=45, visible=False),
         gr.Textbox(label="dereverb_model", value="", visible=False),
         gr.Number(label="inst_volume_db", value=-6.0, visible=False),
+        # 0.7.0：必须排在 progress 之前——Gradio 按位置把组件对到形参，
+        # 末尾的 progress 不占组件位。
+        gr.Dropdown(label="render_mode", choices=["chorus", "full", "custom"],
+                    value="chorus", visible=False),
     ]
 
 
 def build():
     with gr.Blocks(title="chorus-mw") as demo:
         gr.Markdown(
-            "## RVC 副歌翻唱中间层（N 卡）\n"
-            "整首分离 → 挑 45 秒副歌 → 去混响 → RVC 变声 → 混音。"
+            "## RVC 翻唱中间层（N 卡）\n"
+            "先切副歌 → 只分离这一段 → 去混响 ∥ 伴奏处理 → RVC 变声 → 混音。\n\n"
+            "`render_mode`：`chorus`（默认，45 秒副歌）/ `custom`（自定时长，20~180 秒）/ "
+            "`full`（整首翻唱，耗时可能是副歌模式的 5~10 倍，显存占用更高）。"
         )
         api_out = gr.Audio(visible=False)
         api_flag = gr.Textbox(visible=False)
@@ -304,6 +319,11 @@ if __name__ == "__main__":
             print("  - " + item, flush=True)
         raise SystemExit(2)
     print("chorus-mw 启动，RVC=%s 端口=%d" % (config.RVC_ROOT, config.RVC_PORT), flush=True)
+    # 常驻 worker 在后台线程里拉起：导入 torch / pymss 3~5 秒，不能卡住端口就绪
+    if config.RESIDENT_ENABLED:
+        rvc.warmup_resident()
+    else:
+        print("CHORUS_RESIDENT=0，本次每个任务都起独立子进程", flush=True)
     build().queue().launch(
         server_name=os.environ.get("CHORUS_HOST", "127.0.0.1"),
         server_port=int(os.environ.get("CHORUS_PORT", "3333")),

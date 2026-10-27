@@ -30,10 +30,20 @@ def _envelope(path, hop=0.05):
     return env.astype("float32"), sr, len(mono) / float(sr)
 
 
-def pick_window(vocal_path, seconds=None, hop_seconds=None):
-    """返回 (start_sec, end_sec)。音频比目标短就整首。"""
+def pick_window(vocal_path, seconds=None, hop_seconds=None,
+                min_seconds=None, max_seconds=None):
+    """返回 (start_sec, end_sec)。音频比目标短就整首。
+
+    min_seconds / max_seconds 是软切后允许的长度区间，默认用 config 里的
+    40~50 秒（只适合 45 秒副歌）。0.7.0 起先在整首混音上挑候选窗口、
+    再在人声里精挑，两处目标长度不同，所以要能传进来。
+    """
     seconds = float(seconds or config.CHORUS_SECONDS)
     hop_seconds = float(hop_seconds or config.CHORUS_HOP)
+    min_keep = float(config.CHORUS_MIN_SECONDS if min_seconds is None else min_seconds)
+    max_keep = float(config.CHORUS_MAX_SECONDS if max_seconds is None else max_seconds)
+    if max_keep < min_keep:
+        max_keep = min_keep
     env, sr, duration = _envelope(vocal_path)
     if duration <= seconds + 2:
         return 0.0, duration
@@ -61,12 +71,12 @@ def pick_window(vocal_path, seconds=None, hop_seconds=None):
     end_sec = _snap(env, fps, end_sec, duration)
 
     # 软切后长度兜底，别切出个 20 秒
-    if end_sec - start_sec < config.CHORUS_MIN_SECONDS:
+    if end_sec - start_sec < min_keep:
         mid = (start_sec + end_sec) / 2.0
         start_sec = max(0.0, mid - seconds / 2.0)
         end_sec = min(duration, start_sec + seconds)
-    if end_sec - start_sec > config.CHORUS_MAX_SECONDS:
-        end_sec = start_sec + config.CHORUS_MAX_SECONDS
+    if end_sec - start_sec > max_keep:
+        end_sec = start_sec + max_keep
     return round(start_sec, 2), round(min(end_sec, duration), 2)
 
 
