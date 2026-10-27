@@ -1,9 +1,14 @@
 # chorus-mw
 
-RVC 副歌翻唱中间层。给 AstrBot 的唱歌插件 `astrbot_plugin_matsuko_cover` 当后端用：
+RVC 副歌翻唱中间层，给 AstrBot 的翻唱插件当后端用：
 丢一首歌进去，出来一段 45 秒的翻唱成品。
 
+默认后端插件是自维护分支 `astrbot_plugin_chorus_cover`（也可接上游 `astrbot_plugin_matsuko_cover`，
+接口签名一致）。
+
 整条链路：**下歌 → 整首人声分离 → 挑副歌 45 秒 → 软切换气点 → 去混响 → RVC 变声 → 人声与伴奏一起移调 → 混音 → 出 wav**
+
+当前默认模型：分离用 `becruily_deux`，去混响用 `anvuew sdr 22.505`（0.6.0 起），换模型见文末「分离模型」。
 
 ## 目录
 
@@ -49,6 +54,7 @@ gradio_client 2.x 读到 `protocol: ws` 会直接抛 `Unknown protocol: ws`；0.
 | rubberband 4.0 | `bin\rubberband.exe` | 音高变换，**必须和 `sndfile.dll` 放一起** |
 | Gradio 4.44 | `libs_web\` | `pip install --target libs_web -r requirements.txt` |
 | gradio_client 0.2.9 | `libs\` | `runtime\python.exe -m pip install --target libs --no-deps -r requirements-worker.txt` |
+| 分离模型 | RVC 的 `assets\pymss_weights\` | ckpt + yaml 成对放，且要在 `tools\pymss_webui.py` 的预设清单里登记才可选 |
 
 > `huggingface_hub` 必须降到 0.35.x：gradio 4.44 还在用 `HfFolder`，hub 2.x 把它删了会直接 ImportError。
 
@@ -80,7 +86,7 @@ powershell -ExecutionPolicy Bypass -File scripts\start.ps1 -Stop    :: 停掉
 | `CHORUS_HOST` | 127.0.0.1 | 监听地址 |
 | `CHORUS_RUBBERBAND` | `bin\rubberband.exe` | 想用系统装的 rubberband 就指过去 |
 | `CHORUS_RVC_PORT` | 7897 | RVC WebUI 端口 |
-| `CHORUS_SEP_MODEL` / `CHORUS_DEREVERB_MODEL` | 去伴奏 / 去混响 | 分离模型标签 |
+| `CHORUS_SEP_MODEL` / `CHORUS_DEREVERB_MODEL` | 去伴奏（becruily deux） / 去混响（anvuew 22.505） | 分离模型标签，要和 RVC 预设清单里的 label 完全一致 |
 | `CHORUS_F0` / `CHORUS_INDEX_RATE` / `CHORUS_RMS_MIX` / `CHORUS_PROTECT` | rmvpe / 0.75 / 0.35 / 0.33 | 推理参数 |
 | `CHORUS_SECONDS` | 45 | 副歌截取秒数 |
 
@@ -106,7 +112,7 @@ SnowLuma 收尾；本仓库只负责中间层自己，启动器那边是用户�
 `/convert` 参数名和原中间层完全一致（`song_name_src, key_shift, vocal_vol, inst_vol,
 model_dropdown, reverb_intensity, delay_intensity, f0_method, index_rate, filter_radius,
 uvr5_*, msst_*, vocal_postprocess, shift_accompaniment`），末尾追加三个本机参数：
-`chorus_seconds`（默认 45）、`dereverb_model`（默认「去混响」）、`inst_volume_db`（默认 -2.0）。
+`chorus_seconds`（默认 45）、`dereverb_model`（默认「去混响（anvuew 22.505）」）、`inst_volume_db`（默认 -6.0，伴奏压得比人声低一些）。
 **每个组件都写了 label**，Gradio 4 的 `/info` 靠它生成 `parameter_name`，插件那边才能用 kwargs。
 
 ## 移调怎么做的
