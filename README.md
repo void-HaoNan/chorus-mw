@@ -3,6 +3,8 @@
 RVC 翻唱中间层，给 AstrBot 的翻唱插件当后端用：
 丢一首歌进去，出来一段翻唱成品（默认 45 秒副歌，也可以自定长度或整首翻唱）。
 
+当前版本：`0.8.0`（0.8.0 打通了推理与混音参数，见「音色与音量参数」）。
+
 默认后端插件是自维护分支 `astrbot_plugin_chorus_cover`（也可接上游 `astrbot_plugin_matsuko_cover`，
 接口签名一致）。
 
@@ -12,6 +14,10 @@ RVC 翻唱中间层，给 AstrBot 的翻唱插件当后端用：
 现在默认只分离 60 秒左右，同一首 4:39 的歌实测 **72.2 秒 → 32.6 秒**。
 
 当前默认模型：分离用 `becruily_deux`，去混响用 `anvuew sdr 22.505`（0.6.0 起），换模型见文末「分离模型」。
+
+0.8.0 起，插件设置里的 `f0_method` / `index_rate` / `rms_mix_rate` / `protect` /
+`inst_volume_db` / `vocal_volume_db` 会真的传进 RVC 和混音（不再写死默认值），
+细节和实测见下文「音色与音量参数」。
 
 ## 目录
 
@@ -65,6 +71,26 @@ gradio_client 2.x 读到 `protocol: ws` 会直接抛 `Unknown protocol: ws`；0.
 `chorus` / `custom` 的省时原理：先在**整首混音**上用能量包络挑一个「目标时长 + 15 秒」的候选窗口
 （最长不超过整首），只切这一段去做分离，再在分离出的人声里精挑最终那段、把边界吸附到换气点。
 新顺序任何一步报错都会自动退回「整首分离再切」，日志里记 `fallback=full_separation`。
+
+## 音色与音量参数（0.8.0 起真的生效）
+
+0.7.0 及以前 `/convert` 虽然收了这些参数，但 `pipeline` 里写死用 `config.py` 的默认值，
+插件里改 `index_rate` 毫无效果。0.8.0 起全部按请求解析、一路传到 RVC 推理和混音：
+
+| 参数 | 默认 | 范围 | 作用 | 调大 / 调小 |
+| --- | --- | --- | --- | --- |
+| `f0_method` | `rmvpe` | `rmvpe` / `pm` / `crepe` / `harvest` | 音高提取算法 | `rmvpe` 最稳；`pm` 最快、质量一般；`crepe` 更吃显卡；`harvest` 兜底 |
+| `index_rate` | `0.75` | 0~1 | 特征检索比率，越高越贴模型音色 | 调大更贴音色但易生硬；调小更自由、可能走音 |
+| `rms_mix_rate` | `0.35` | 0~1 | 人声音量包络贴合原唱的程度 | 调大更自然、人声可能被压小；调小更平更冲、易发闷 |
+| `protect` | `0.33` | 0~0.5 | 保护清音/气声，减少撕裂 | 调大更安全、更少电流味；调小更贴音色、易沙 |
+| `inst_volume_db` | `-6.0` | -20~0 | 伴奏音量（dB） | 调大伴奏更响；调小几乎只剩人声 |
+| `vocal_volume_db` | `0.0` | -12~+12 | 人声音量（dB，0 为原样） | 调大人声更靠前；调小人声往后退 |
+
+- 每次请求都会打一行 `[chorus-mw] params f0=... index_rate=... ...`，`done` 那行也会重复最终值，对着日志就能核对。
+- 启动时另打一行「生效参数默认值」，那是没被请求覆盖时用的值（可用环境变量改，见下表）。
+- **`filter_radius` 只收下并记日志（标注「暂未使用」）**：RVC WebUI 这一版的 `/infer_convert` 只有 9 个入参，
+  没有 filter_radius，传不下去，所以它不会改变成品——别把它当成能调的东西。
+- 这些参数和两条轨道的音量都进了缓存 key：改了就会重新跑，不会拿上次的成品糊弄你。
 
 ## 常驻 worker 与并行（0.7.0）
 
@@ -120,7 +146,9 @@ powershell -ExecutionPolicy Bypass -File scripts\start.ps1 -Stop    :: 停掉
 | `CHORUS_RUBBERBAND` | `bin\rubberband.exe` | 想用系统装的 rubberband 就指过去 |
 | `CHORUS_RVC_PORT` | 7897 | RVC WebUI 端口 |
 | `CHORUS_SEP_MODEL` / `CHORUS_DEREVERB_MODEL` | 去伴奏（becruily deux） / 去混响（anvuew 22.505） | 分离模型标签，要和 RVC 预设清单里的 label 完全一致 |
-| `CHORUS_F0` / `CHORUS_INDEX_RATE` / `CHORUS_RMS_MIX` / `CHORUS_PROTECT` | rmvpe / 0.75 / 0.35 / 0.33 | 推理参数 |
+| `CHORUS_F0` / `CHORUS_INDEX_RATE` / `CHORUS_RMS_MIX` / `CHORUS_PROTECT` | rmvpe / 0.75 / 0.35 / 0.33 | 推理参数默认值（请求没传或传了非法值时用） |
+| `CHORUS_FILTER_RADIUS` | 3 | 只用于日志/缺省解析；RVC WebUI 本版没有这个入参，暂不生效 |
+| `CHORUS_INST_VOLUME_DB` / `CHORUS_VOCAL_VOLUME_DB` | -6.0 / 0.0 | 混音默认电平（dB） |
 | `CHORUS_SECONDS` | 45 | 默认翻唱秒数（调用方不传 `chorus_seconds` 时用） |
 | `CHORUS_MARGIN_SECONDS` | 15 | 先切后分离的余量：候选窗口 = 目标时长 + 这么多秒 |
 | `CHORUS_RESIDENT` | 1 | 设为 `0` 关掉常驻 worker，退回每次起进程（省显存、但慢 10~15 秒） |
@@ -139,7 +167,7 @@ SnowLuma 收尾；本仓库只负责中间层自己，启动器那边是用户�
 
 | api_name | 说明 |
 | --- | --- |
-| `/convert` | 主入口，26 个参数，按名字传 kwargs，返回 `(音频文件, "true"/"false" 是否命中缓存)` |
+| `/convert` | 主入口，29 个参数，按名字传 kwargs，返回 `(音频文件, "true"/"false" 是否命中缓存)` |
 | `/show_model` | 列出 `assets\weights` 里的模型（返回 list） |
 | `/show_msst_models` / `/select_msst_model` | 分离模型列表与切换 |
 | `/cache_info` / `/clear_cache` | 缓存统计与清理 |
@@ -149,7 +177,9 @@ model_dropdown, reverb_intensity, delay_intensity, f0_method, index_rate, filter
 uvr5_*, msst_*, vocal_postprocess, shift_accompaniment`），末尾追加本机参数：
 `chorus_seconds`（默认 45）、`dereverb_model`（默认「去混响（anvuew 22.505）」）、
 `inst_volume_db`（默认 -6.0，伴奏压得比人声低一些）、
-**`render_mode`（0.7.0 新增，`chorus` / `full` / `custom`，默认 `chorus`）**。
+**`render_mode`（0.7.0 新增，`chorus` / `full` / `custom`，默认 `chorus`）**，
+以及 0.8.0 新增的 **`rms_mix_rate`（默认 0.35）、`protect`（默认 0.33）、
+`vocal_volume_db`（默认 0.0，人声电平）**。
 **每个组件都写了 label**，Gradio 4 的 `/info` 靠它生成 `parameter_name`，插件那边才能用 kwargs。
 
 ## 移调怎么做的
@@ -188,7 +218,7 @@ python tools\check_plugin_compat.py
 - **插件传 `render_mode` 报 `Parameter render_mode is not a valid key-word argument`**：中间层还是 0.6.0 之前的版本，`/info` 里没有这个参数。升到 0.7.0 并重启 3333；旧插件不传这个参数也能用，按 `chorus` 处理。
 - **第一步就慢/每次 3~5 秒白等**：看 `_work\mw.log` 里是不是 `worker=process`；如果常驻 worker 没起来（`_work\resident.log` 有 traceback），会用旧路兜底，功能不受影响，只是慢。检查 `config.RVC_PYTHON` 能否跑 `resident_worker.py`。
 - **变声报 `NoneType has no attribute pipeline`**：模型没加载。`rvc_worker.py` 每次都会先调 `/infer_change_voice` 预热，正常碰不到。
-- **同一首歌重复跑**：命中 `cache/` 直接返回；改 `key_shift` 或模型都会换 key。
+- **同一首歌重复跑**：命中 `cache/` 直接返回；改 `key_shift`、模型、`render_mode`/时长、`f0_method`、`index_rate`、`rms_mix_rate`、`protect`、`inst_volume_db`、`vocal_volume_db` 任意一项都会换 key，重新跑。
 - **WebUI 里有人在用**：不行。RVC 单实例、有全局状态，中间层在跑的时候别在 WebUI 上手动操作。
 - **同时开了两个中间层 / 两个客户端抢 7897**：RVC WebUI 用一份全局模型状态，两边交替调 `/infer_change_voice`
   会互相把 pipeline 换掉，可能收到一个空错误（`ValueError:` 后面什么都没有）。同一时间只跑一个中间层；

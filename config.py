@@ -10,6 +10,9 @@ import os
 
 HOME = os.path.dirname(os.path.abspath(__file__))
 
+# 服务版本（和 CHANGELOG / README 对齐），启动日志与 /cache_info 都会带出来
+VERSION = "0.8.0"
+
 
 class ConfigError(RuntimeError):
     """启动前检查没通过时抛这个，消息直接给用户看。"""
@@ -69,11 +72,21 @@ RESIDENT_ENABLED = os.environ.get("CHORUS_RESIDENT", "1").strip().lower() not in
 SEP_MODEL = os.environ.get("CHORUS_SEP_MODEL", "去伴奏（becruily deux）")
 DERERVERB_MODEL = os.environ.get("CHORUS_DEREVERB_MODEL", "去混响（anvuew 22.505）")
 
-# 推理默认值
-DEFAULT_F0 = os.environ.get("CHORUS_F0", "rmvpe")
+# 推理默认值（调用方没传 / 传了非法值时用这些）
+F0_CHOICES = ("rmvpe", "pm", "crepe", "harvest")
+DEFAULT_F0 = (os.environ.get("CHORUS_F0") or "rmvpe").strip().lower()
+if DEFAULT_F0 not in F0_CHOICES:  # 环境变量写错别让服务起不来
+    DEFAULT_F0 = "rmvpe"
 DEFAULT_INDEX_RATE = float(os.environ.get("CHORUS_INDEX_RATE", "0.75"))
 DEFAULT_RMS_MIX = float(os.environ.get("CHORUS_RMS_MIX", "0.35"))
 DEFAULT_PROTECT = float(os.environ.get("CHORUS_PROTECT", "0.33"))
+# filter_radius：RVC WebUI 这一版的 /infer_convert 没有这个入参（只有 9 个 input），
+# 中间层照收、照记日志，但**传不下去**，不要假装它生效了。
+DEFAULT_FILTER_RADIUS = int(os.environ.get("CHORUS_FILTER_RADIUS", "3"))
+
+# 混音默认电平（dB）：伴奏默认压一点，人声保持原样
+DEFAULT_INST_VOLUME_DB = float(os.environ.get("CHORUS_INST_VOLUME_DB", "-6.0"))
+DEFAULT_VOCAL_VOLUME_DB = float(os.environ.get("CHORUS_VOCAL_VOLUME_DB", "0.0"))
 
 # 网易云兜底下载（插件传歌名而不是文件路径时用）
 NETEASE_SEARCH = "http://music.163.com/api/search/get/web"

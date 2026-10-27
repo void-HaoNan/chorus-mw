@@ -109,6 +109,65 @@ PYMSS_LABELS = [
 ]
 _STATE = {"msst_model": config.SEP_MODEL}
 
+# RVC WebUI 这一版 /infer_convert 的「选择音高提取算法」单选里就这几个值
+F0_CHOICES = config.F0_CHOICES
+
+
+def _as_float(value, default, low, high, name):
+    """把调用方传的值收敛到 [low, high]；解析不了就用默认值，并记一行日志。
+
+    插件设置页的输入是不可信的（老配置里可能存成字符串、也可能被人手改成越界值），
+    所以这里统一兜底，别让一个坏值把整次翻唱搞崩。
+    """
+    try:
+        number = float(value) if value not in (None, "") else float(default)
+    except (TypeError, ValueError):
+        print("[chorus-mw] 参数 %s=%r 不是数字，改用默认值 %s" % (name, value, default), flush=True)
+        number = float(default)
+    if number < low:
+        print("[chorus-mw] 参数 %s=%.4f 小于下限 %s，按 %s 处理" % (name, number, low, low), flush=True)
+        number = float(low)
+    elif number > high:
+        print("[chorus-mw] 参数 %s=%.4f 大于上限 %s，按 %s 处理" % (name, number, high, high), flush=True)
+        number = float(high)
+    return number
+
+
+def _as_int(value, default, low, high, name):
+    return int(round(_as_float(value, default, low, high, name)))
+
+
+def _resolve_infer_params(f0_method, index_rate, rms_mix_rate, protect, filter_radius):
+    """把插件传来的推理参数解析成最终生效值（缺省用 config 里的默认值）。"""
+    f0 = str(f0_method or config.DEFAULT_F0).strip().lower()
+    if f0 not in F0_CHOICES:
+        print("[chorus-mw] 参数 f0_method=%r 不认识，改用默认值 %s" % (f0_method, config.DEFAULT_F0), flush=True)
+        f0 = str(config.DEFAULT_F0).strip().lower()
+    return {
+        "f0_method": f0,
+        "index_rate": _as_float(index_rate, config.DEFAULT_INDEX_RATE, 0.0, 1.0, "index_rate"),
+        "rms_mix_rate": _as_float(rms_mix_rate, config.DEFAULT_RMS_MIX, 0.0, 1.0, "rms_mix_rate"),
+        "protect": _as_float(protect, config.DEFAULT_PROTECT, 0.0, 0.5, "protect"),
+        # 只收下并记日志：RVC WebUI 这一版的 /infer_convert 没有 filter_radius 入参
+        "filter_radius": _as_int(
+            filter_radius, config.DEFAULT_FILTER_RADIUS, 0, 10, "filter_radius"
+        ),
+    }
+
+
+def _log_effective_params(params, inst_volume_db, vocal_volume_db):
+    """每次请求打一行，方便对着日志核对「到底用了什么」。"""
+    print(
+        "[chorus-mw] params f0=%s index_rate=%.2f rms_mix_rate=%.2f protect=%.2f "
+        "filter_radius=%d（中间层暂未使用，RVC WebUI 本版无此入参） "
+        "inst_volume_db=%.1f vocal_volume_db=%.1f"
+        % (
+            params["f0_method"], params["index_rate"], params["rms_mix_rate"],
+            params["protect"], params["filter_radius"], inst_volume_db, vocal_volume_db,
+        ),
+        flush=True,
+    )
+
 
 def convert(
     song_name_src,
@@ -137,6 +196,9 @@ def convert(
     dereverb_model=None,
     inst_volume_db=-6.0,
     render_mode="chorus",
+    rms_mix_rate=None,
+    protect=None,
+    vocal_volume_db=None,
     progress=None,
 ):
     """兼容原中间层签名的入口。
@@ -145,10 +207,23 @@ def convert(
         chorus —— 默认，副歌片段，默认 45 秒，切 60 秒去分离
         full   —— 整首翻唱，分离整首、变声整首；耗时可能是副歌模式的 5~10 倍，显存占用更高
         custom —— 自定义时长，用 chorus_seconds（20~180），同样先切（时长 + 15 秒）再分离
+
+    0.8.0 起这几个参数不再是摆设，会真的传进 RVC 和混音：
+        f0_method / index_rate / rms_mix_rate / protect / inst_volume_db / vocal_volume_db
+    其中 filter_radius 只收下并记日志（RVC WebUI 本版 /infer_convert 没有这个入参）。
     """
     try:
         shift = int(key_shift or 0)
-        inst_gain = float(inst_volume_db if inst_volume_db not in (None, "") else -6.0)
+        params = _resolve_infer_params(
+            f0_method, index_rate, rms_mix_rate, protect, filter_radius
+        )
+        inst_gain = _as_float(
+            inst_volume_db, config.DEFAULT_INST_VOLUME_DB, -20.0, 0.0, "inst_volume_db"
+        )
+        vocal_gain = _as_float(
+            vocal_volume_db, config.DEFAULT_VOCAL_VOLUME_DB, -12.0, 12.0, "vocal_volume_db"
+        )
+        _log_effective_params(params, inst_gain, vocal_gain)
         mode = pipeline.normalize_mode(render_mode)
         audio, cache_hit, _note = pipeline.run(
             song_name_src,
@@ -157,9 +232,14 @@ def convert(
             chorus_seconds=chorus_seconds,
             dereverb_model=dereverb_model,
             inst_volume_db=inst_gain,
+            vocal_volume_db=vocal_gain,
             shift_instrumental=shift if shift_accompaniment else 0.0,
             progress=progress,
             render_mode=mode,
+            f0_method=params["f0_method"],
+            index_rate=params["index_rate"],
+            rms_mix_rate=params["rms_mix_rate"],
+            protect=params["protect"],
         )
         return audio, "true" if cache_hit else "false"
     except Exception as error:
@@ -183,6 +263,7 @@ def cache_info():
                 total += os.path.getsize(path)
     return {
         "service": "chorus-mw (RVC / NVIDIA)",
+        "version": config.VERSION,
         # 别把绝对路径塞进返回值：Gradio 4 看到「存在的路径字符串」会当成文件去
         # 下载，客户端拿到 403。这里只报名字和数字。
         "areas": {
@@ -246,8 +327,10 @@ def _hidden_inputs():
         gr.Textbox(label="model_dropdown", value="", visible=False),
         gr.Slider(label="reverb_intensity", minimum=0, maximum=10, step=1, value=4, visible=False),
         gr.Slider(label="delay_intensity", minimum=0, maximum=10, step=1, value=0, visible=False),
-        gr.Dropdown(label="f0_method", choices=["rmvpe", "pm"], value="rmvpe", visible=False),
-        gr.Slider(label="index_rate", minimum=0, maximum=1, step=0.05, value=0.75, visible=False),
+        gr.Dropdown(label="f0_method", choices=list(F0_CHOICES),
+                    value=config.DEFAULT_F0, visible=False),
+        gr.Slider(label="index_rate", minimum=0, maximum=1, step=0.05,
+                  value=config.DEFAULT_INDEX_RATE, visible=False),
         gr.Slider(label="filter_radius", minimum=0, maximum=7, step=1, value=3, visible=False),
         gr.Slider(label="uvr5_agg", minimum=0, maximum=20, step=1, value=10, visible=False),
         gr.Checkbox(label="uvr5_tta", value=False, visible=False),
@@ -264,11 +347,19 @@ def _hidden_inputs():
         gr.Checkbox(label="shift_accompaniment", value=True, visible=False),
         gr.Number(label="chorus_seconds", value=45, visible=False),
         gr.Textbox(label="dereverb_model", value="", visible=False),
-        gr.Number(label="inst_volume_db", value=-6.0, visible=False),
+        gr.Number(label="inst_volume_db", value=config.DEFAULT_INST_VOLUME_DB, visible=False),
         # 0.7.0：必须排在 progress 之前——Gradio 按位置把组件对到形参，
         # 末尾的 progress 不占组件位。
         gr.Dropdown(label="render_mode", choices=["chorus", "full", "custom"],
                     value="chorus", visible=False),
+        # 0.8.0：这三个补在末尾，不挪动已有参数位；插件侧按名字传 kwargs。
+        # 组件默认值也取 config，所以「调用方没传」时用的就是环境变量里那套默认值。
+        gr.Slider(label="rms_mix_rate", minimum=0, maximum=1, step=0.05,
+                  value=config.DEFAULT_RMS_MIX, visible=False),
+        gr.Slider(label="protect", minimum=0, maximum=0.5, step=0.01,
+                  value=config.DEFAULT_PROTECT, visible=False),
+        gr.Number(label="vocal_volume_db", value=config.DEFAULT_VOCAL_VOLUME_DB,
+                  visible=False),
     ]
 
 
@@ -318,7 +409,19 @@ if __name__ == "__main__":
         for item in problems:
             print("  - " + item, flush=True)
         raise SystemExit(2)
-    print("chorus-mw 启动，RVC=%s 端口=%d" % (config.RVC_ROOT, config.RVC_PORT), flush=True)
+    print("chorus-mw %s 启动，RVC=%s 端口=%d" % (
+        config.VERSION, config.RVC_ROOT, config.RVC_PORT), flush=True)
+    print(
+        "[chorus-mw] 生效参数默认值 f0_method=%s index_rate=%.2f rms_mix_rate=%.2f "
+        "protect=%.2f filter_radius=%d（暂未使用，RVC WebUI 本版无此入参） "
+        "inst_volume_db=%.1f vocal_volume_db=%.1f（插件会按请求逐个覆盖）"
+        % (
+            config.DEFAULT_F0, config.DEFAULT_INDEX_RATE, config.DEFAULT_RMS_MIX,
+            config.DEFAULT_PROTECT, config.DEFAULT_FILTER_RADIUS,
+            config.DEFAULT_INST_VOLUME_DB, config.DEFAULT_VOCAL_VOLUME_DB,
+        ),
+        flush=True,
+    )
     # 常驻 worker 在后台线程里拉起：导入 torch / pymss 3~5 秒，不能卡住端口就绪
     if config.RESIDENT_ENABLED:
         rvc.warmup_resident()

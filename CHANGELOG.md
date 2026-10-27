@@ -1,5 +1,47 @@
 # CHANGELOG
 
+## 0.8.0 — 2026-10-27
+
+**参数打通**：0.7.0 之前 `/convert` 虽然收了 26 个参数，但 `pipeline` 里写死用
+`config.DEFAULT_F0 / DEFAULT_INDEX_RATE / DEFAULT_RMS_MIX / DEFAULT_PROTECT`，
+插件里改 `index_rate` **毫无效果**。0.8.0 起全部按请求解析并真正传下去。
+
+### 变更
+
+- `app.py` 的 `convert()` 把 `f0_method`（str）、`index_rate` / `rms_mix_rate` /
+  `protect` / `inst_volume_db` / `vocal_volume_db`（float）、`filter_radius`（int）
+  解析成最终值：缺省用 `config` 里的默认值，越界夹到范围内，非法值打一行日志后回落默认值。
+- 一路传到 `pipeline.run` → `rvc.convert`（`f0_method` / `index_rate` / `rms_mix_rate` /
+  `protect`）和混音 `mix`（`inst_volume_db` / `vocal_volume_db`）。
+- **混音新增人声音量 `vocal_volume_db`（默认 0.0）**：人声轨乘 `10^(db/20)`，伴奏轨仍走
+  `inst_volume_db`；两个都是 dB，负数是压小。
+- **`filter_radius` 只收下并记日志，标注「暂未使用」**：RVC WebUI 这一版的
+  `/infer_convert` 只有 9 个入参（speaker / input / pitch / f0 / index / index_rate /
+  resample / rms / protect），根本没有 `filter_radius`，传不下去，所以它不会改变成品。
+- `/convert` 新增 `rms_mix_rate`、`protect`、`vocal_volume_db` 三个参数（**26 → 29 个**），
+  每个都带同名 `label`，`/info` 里能查到 `parameter_name`，插件才能用 kwargs 传。
+- **缓存 key 加入** `f0_method` / `index_rate` / `rms_mix_rate` / `protect` /
+  `inst_volume_db` / `vocal_volume_db`：改任何一项都会重新跑，不会再拿旧缓存糊弄。
+- 启动日志多打一行「生效参数默认值」；每次请求打一行 `params ...`（`done` 行也重复最终值），
+  对着日志就能核对实际用了什么。
+- `config.py` 新增 `CHORUS_FILTER_RADIUS`、`CHORUS_INST_VOLUME_DB`、
+  `CHORUS_VOCAL_VOLUME_DB` 三个环境变量。
+
+### 实测（同一首 4:39 的 mp3，模型 `ainuo.pth`，chorus 模式，窗口 157.5–202.6 秒）
+
+| 场景 | 成品 | 差异证据 |
+| --- | --- | --- |
+| `index_rate=0.3` | 45.0 s，RMS -16.27 dB，峰值 -1.78 dB | 与 0.9 比：波形相关 **0.9879**、200–8000 Hz 频谱平均差 **3.26 dB**，差分信号 -32.4 dBFS |
+| `index_rate=0.9` | 45.0 s，RMS -16.26 dB，峰值 -1.72 dB | 同上 |
+| 对照：0.9 再跑一次（换缓存 key 强制重跑） | 与上次**逐样本一致** | 波形相关 **1.0000**、频谱平均差 0.02 dB → RVC 推理是确定的，0.3/0.9 的差异确实来自参数 |
+| `inst_volume_db=-6` | 峰值 -1.72 dB | <200 Hz 能量占比 **27.92%** |
+| `inst_volume_db=-12` | 峰值 -1.51 dB | <200 Hz 能量占比 **18.03%**（相对降 35%），200–2000 Hz 占比 68.40% → 78.77%，波形相关 0.9455 |
+| `f0_method=pm` | 45.0 s，RMS -16.27 dB | 与 `rmvpe` 波形相关 **0.3924**，两次日志分别 `f0=rmvpe` / `f0=pm`，都能跑通 |
+
+> 本机 8 GB 显存同时被 OBS / NVIDIA Broadcast / 浏览器占着，连续跑几次后分离会报
+> CUDA OOM（`分离没有产出人声`，`_work/resident.log` 里有 traceback）；关掉/重启 RVC WebUI
+> 腾出显存后同一请求一次通过。这是环境资源问题，不是参数链路问题。
+
 ## 0.7.0 — 2026-10-27
 
 提速 + 「唱多长」三种模式。

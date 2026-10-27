@@ -151,8 +151,14 @@ def pitch_shift(src, dst, semitones, timeout=300):
     return dst
 
 
-def mix(vocal_path, inst_path, out_path, inst_volume_db=-2.0, shift_instrumental=0.0):
+def mix(vocal_path, inst_path, out_path, inst_volume_db=-2.0, shift_instrumental=0.0,
+        vocal_volume_db=0.0):
+    """人声轨按 vocal_volume_db、伴奏轨按 inst_volume_db 各自乘增益后再混。
+
+    两个音量都是 dB（0 表示原样，负数是压小），换算成线性倍数再交给 ffmpeg 的 volume。
+    """
     vol = 10.0 ** (float(inst_volume_db) / 20.0)
+    vocal_vol = 10.0 ** (float(vocal_volume_db) / 20.0)
     shifted_inst = inst_path
     temp = None
     if shift_instrumental:
@@ -163,10 +169,10 @@ def mix(vocal_path, inst_path, out_path, inst_volume_db=-2.0, shift_instrumental
         shifted_inst = pitch_shift(inst_path, temp, shift_instrumental)
     try:
         graph = (
-            "[0:a]aresample=44100,aformat=channel_layouts=stereo,volume=1.0[a];"
+            "[0:a]aresample=44100,aformat=channel_layouts=stereo,volume=%.4f[a];"
             "[1:a]aresample=44100,aformat=channel_layouts=stereo,volume=%.4f[b];"
             "[a][b]amix=inputs=2:duration=longest,volume=2.0,"
-            "loudnorm=I=-14:TP=-1.5:LRA=11" % vol
+            "loudnorm=I=-14:TP=-1.5:LRA=11" % (vocal_vol, vol)
         )
         _run([
             config.FFMPEG, "-y", "-v", "error",
@@ -240,7 +246,16 @@ def cache_key(source, model, key_shift, extra):
         "chorus": extra.get("target", config.CHORUS_SECONDS),
         "sep": config.SEP_MODEL,
         "dereverb": extra.get("dereverb", config.DERERVERB_MODEL),
-        "index_rate": config.DEFAULT_INDEX_RATE,
+        # 推理参数与两条轨道的音量都会改变成品，必须一起进 key，
+        # 否则「改了 index_rate / 伴奏音量却拿到上次的缓存」会让人以为参数没生效。
+        "infer": {
+            "f0": extra.get("f0"),
+            "index_rate": extra.get("index_rate"),
+            "rms_mix_rate": extra.get("rms_mix_rate"),
+            "protect": extra.get("protect"),
+            "inst_volume_db": extra.get("inst_volume_db"),
+            "vocal_volume_db": extra.get("vocal_volume_db"),
+        },
         "extra": extra,
     }
     digest = hashlib.sha256(
@@ -353,14 +368,19 @@ def _prepare_full(source, work, target):
 # ---------------- 主流程 ----------------
 
 def run(song_name_src, key_shift=0, model_dropdown="", chorus_seconds=None,
-        dereverb_model=None, inst_volume_db=-2.0, shift_instrumental=None,
-        progress=None, use_cache=True, render_mode=DEFAULT_RENDER_MODE):
+        dereverb_model=None, inst_volume_db=None, shift_instrumental=None,
+        progress=None, use_cache=True, render_mode=DEFAULT_RENDER_MODE,
+        f0_method=None, index_rate=None, rms_mix_rate=None, protect=None,
+        vocal_volume_db=None):
     """返回 (输出音频路径, 是否命中缓存, 说明文本)。
 
     render_mode:
         chorus —— 默认，副歌片段（默认 45 秒，先切 60 秒去分离）
         full   —— 整首翻唱（分离整首、变声整首，耗时可能是副歌模式的 5~10 倍）
         custom —— 自定义时长，用 chorus_seconds（20~180），同样先切（时长 + 15 秒）
+
+    0.8.0：f0_method / index_rate / rms_mix_rate / protect / inst_volume_db /
+    vocal_volume_db 都会真的传给 RVC 和混音；传 None 表示用 config 里的默认值。
     """
     def report(pct, text):
         if progress is not None:
@@ -372,6 +392,15 @@ def run(song_name_src, key_shift=0, model_dropdown="", chorus_seconds=None,
     started = time.time()
     mode = normalize_mode(render_mode)
     target = resolve_target_seconds(mode, chorus_seconds)
+    # 调用方没传就用 config 默认值；这里再兜一层，pipeline 单独被调用也不会用错值
+    f0 = str(f0_method or config.DEFAULT_F0).strip().lower()
+    idx = config.DEFAULT_INDEX_RATE if index_rate is None else float(index_rate)
+    rms = config.DEFAULT_RMS_MIX if rms_mix_rate is None else float(rms_mix_rate)
+    prot = config.DEFAULT_PROTECT if protect is None else float(protect)
+    inst_db = config.DEFAULT_INST_VOLUME_DB if inst_volume_db is None else float(inst_volume_db)
+    vocal_db = (
+        config.DEFAULT_VOCAL_VOLUME_DB if vocal_volume_db is None else float(vocal_volume_db)
+    )
     source = resolve_source(song_name_src)
     report(4, "音频就位：%s" % os.path.basename(source))
 
@@ -379,7 +408,17 @@ def run(song_name_src, key_shift=0, model_dropdown="", chorus_seconds=None,
     dereverb_label = dereverb_model or config.DERERVERB_MODEL
     if shift_instrumental is None:
         shift_instrumental = float(key_shift)
-    extra = {"dereverb": dereverb_label, "mode": mode, "target": round(target, 2)}
+    extra = {
+        "dereverb": dereverb_label,
+        "mode": mode,
+        "target": round(target, 2),
+        "f0": f0,
+        "index_rate": round(idx, 4),
+        "rms_mix_rate": round(rms, 4),
+        "protect": round(prot, 4),
+        "inst_volume_db": round(inst_db, 2),
+        "vocal_volume_db": round(vocal_db, 2),
+    }
     key = cache_key(source, model, key_shift, extra)
     if use_cache:
         hit = cache_lookup(key)
@@ -446,10 +485,10 @@ def run(song_name_src, key_shift=0, model_dropdown="", chorus_seconds=None,
             clean_vocal,
             model,
             key_shift,
-            config.DEFAULT_F0,
-            config.DEFAULT_INDEX_RATE,
-            config.DEFAULT_RMS_MIX,
-            config.DEFAULT_PROTECT,
+            f0,
+            idx,
+            rms,
+            prot,
         )
         mark("convert")
         shifted_inst = inst_future.result()
@@ -463,7 +502,7 @@ def run(song_name_src, key_shift=0, model_dropdown="", chorus_seconds=None,
         "%s_%s_%s.wav" % (_safe(os.path.splitext(os.path.basename(source))[0], 40),
                           _safe(os.path.splitext(model)[0], 20), token[-6:]),
     )
-    mix(converted, shifted_inst, final, inst_volume_db, 0.0)
+    mix(converted, shifted_inst, final, inst_db, 0.0, vocal_db)
 
     total = round(time.time() - started, 1)
     meta = {
@@ -475,10 +514,19 @@ def run(song_name_src, key_shift=0, model_dropdown="", chorus_seconds=None,
         "chorus": [window["start"], window["end"]],
         "sep_span": window.get("sep_span", 0),
         "seconds": total,
+        "f0_method": f0,
+        "index_rate": round(idx, 4),
+        "rms_mix_rate": round(rms, 4),
+        "protect": round(prot, 4),
+        "inst_volume_db": round(inst_db, 2),
+        "vocal_volume_db": round(vocal_db, 2),
     }
     cache_store(key, final, meta)
-    print("[chorus-mw] done mode=%s target=%.1fs seped=%.1fs window=%.1fs-%.1fs total=%.1fs" % (
-        mode, target, window.get("sep_span", 0), window["start"], window["end"], total), flush=True)
+    print("[chorus-mw] done mode=%s target=%.1fs seped=%.1fs window=%.1fs-%.1fs "
+          "f0=%s index_rate=%.2f rms_mix=%.2f protect=%.2f inst_db=%.1f vocal_db=%.1f "
+          "total=%.1fs" % (
+              mode, target, window.get("sep_span", 0), window["start"], window["end"],
+              f0, idx, rms, prot, inst_db, vocal_db, total), flush=True)
     report(100, "完成")
     shutil.rmtree(work, ignore_errors=True)
     note = "模式 %s，窗口 %.1fs-%.1fs，耗时 %.1fs" % (
