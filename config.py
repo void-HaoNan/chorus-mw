@@ -58,8 +58,9 @@ CHORUS_MAX_SECONDS = 50.0  # 软切后允许的上限
 CHORUS_SNAP = 4.0          # 软切时在目标前后各找多少秒的换气点
 
 # 分离模型（RVC WebUI 下拉框里的中文标签，不能改）
-SEP_MODEL = os.environ.get("CHORUS_SEP_MODEL", "去伴奏")
-DERERVERB_MODEL = os.environ.get("CHORUS_DEREVERB_MODEL", "去混响")
+# 2026-10-27 起默认走 Studio 那套：becruily_deux 分离 + anvuew 22.5050 去混响
+SEP_MODEL = os.environ.get("CHORUS_SEP_MODEL", "去伴奏（becruily deux）")
+DERERVERB_MODEL = os.environ.get("CHORUS_DEREVERB_MODEL", "去混响（anvuew 22.505）")
 
 # 推理默认值
 DEFAULT_F0 = os.environ.get("CHORUS_F0", "rmvpe")

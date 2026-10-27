@@ -21,6 +21,9 @@ TASKS = {
     "dereverb": "去混响",
     "dereverb_aggr": "去混响（激进）",
     "karaoke": "提主旋律",
+    # 2026-10-27 换链：Studio 那套模型，label 必须和 pymss_webui.py 的 ModelSpec 一致
+    "sep_deux": "去伴奏（becruily deux）",
+    "dereverb_anvuew": "去混响（anvuew 22.505）",
 }
 
 

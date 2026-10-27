@@ -66,7 +66,47 @@ def _patch_localhost_probe():
 _patch_localhost_probe()
 
 
-PYMSS_LABELS = ["去混响", "去混响（激进）", "去伴奏", "去伴奏（激进）", "提主旋律"]
+def _patch_starlette_template_signature():
+    """Starlette 1.x 把 Jinja2Templates.TemplateResponse 改成
+    ``(request, name, context)`` 的新签名，并且不再兼容旧的 ``(name, context)``
+    写法；Gradio 4.44 里仍然是老写法，于是 ``name`` 收到一个 dict，jinja2 的
+    模板缓存键不可哈希，直接打开首页（GET /）就会 500：
+
+        TypeError: unhashable type: 'dict'
+
+    ``/info``、``/convert`` 不走模板，所以只有浏览器打开根路径会崩。
+    这里按参数形状做一次归一化：第一个参数不是 Request 就当成模板名，request
+    从 context 里取（Gradio 一定会在 context 里放 request）。
+    """
+    try:
+        from starlette.requests import Request
+        from starlette.templating import Jinja2Templates
+    except Exception:
+        return
+    original = Jinja2Templates.TemplateResponse
+    if getattr(original, "_chorus_normalized", False):
+        return
+
+    def normalized(self, *args, **kwargs):
+        if args and not isinstance(args[0], Request):
+            name = args[0]
+            context = args[1] if len(args) > 1 else kwargs.pop("context", None)
+            request = (context or {}).get("request")
+            if request is not None:
+                return original(self, request, name, context, *args[2:], **kwargs)
+        return original(self, *args, **kwargs)
+
+    normalized._chorus_normalized = True
+    Jinja2Templates.TemplateResponse = normalized
+
+
+_patch_starlette_template_signature()
+
+
+PYMSS_LABELS = [
+    "去混响", "去混响（激进）", "去伴奏", "去伴奏（激进）", "提主旋律",
+    "去伴奏（becruily deux）", "去混响（anvuew 22.505）",
+]
 _STATE = {"msst_model": config.SEP_MODEL}
 
 
@@ -95,13 +135,13 @@ def convert(
     shift_accompaniment=True,
     chorus_seconds=None,
     dereverb_model=None,
-    inst_volume_db=-2.0,
+    inst_volume_db=-6.0,
     progress=None,
 ):
     """兼容原中间层签名的入口。多出来的三个参数本机自用，插件不传也有默认值。"""
     try:
         shift = int(key_shift or 0)
-        inst_gain = float(inst_volume_db if inst_volume_db not in (None, "") else -2.0)
+        inst_gain = float(inst_volume_db if inst_volume_db not in (None, "") else -6.0)
         audio, cache_hit, _note = pipeline.run(
             song_name_src,
             key_shift=shift,
@@ -215,7 +255,7 @@ def _hidden_inputs():
         gr.Checkbox(label="shift_accompaniment", value=True, visible=False),
         gr.Number(label="chorus_seconds", value=45, visible=False),
         gr.Textbox(label="dereverb_model", value="", visible=False),
-        gr.Number(label="inst_volume_db", value=-2.0, visible=False),
+        gr.Number(label="inst_volume_db", value=-6.0, visible=False),
     ]
 
 

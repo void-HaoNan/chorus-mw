@@ -85,10 +85,12 @@ SEP_TASKS = {
     "去伴奏": "sep",
     "去伴奏（激进）": "sep_aggr",
     "提主旋律": "karaoke",
+    "去伴奏（becruily deux）": "sep_deux",
 }
 DEREVERB_TASKS = {
     "去混响": "dereverb",
     "去混响（激进）": "dereverb_aggr",
+    "去混响（anvuew 22.505）": "dereverb_anvuew",
 }
 
 

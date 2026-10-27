@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## 0.6.0 — 2026-10-27
+
+### 变更
+- 分离链换成 PyMSS Studio 那套：becruily_deux 整首分离 → 挑 45 秒副歌 → anvuew 22.505 去混响 → RVC → 混音。
+- 新标签「去伴奏（becruily deux）」「去混响（anvuew 22.505）」加进 SEP_TASKS / DEREVERB_TASKS / sep_worker TASKS / PYMSS_LABELS，config.py 两个默认值同步。
+- 实测整链 74 秒（原链 159 秒），成品 44.45s、44.1k 立体声、mean -16.1dB。
+
+### 说明
+- 去混响模型在 RVC 里必须按 bs_roformer 加载（yaml 是 freqs_per_bands，mel_band 会报 unexpected key）。
+- becruily_deux 的 stem 键是大写 Vocals/Instrumental，desired/secondary_stem 跟着大写，文件名后缀仍小写。
+- 伴奏音量默认从 -2dB 调到 -6dB（人声更突出）。
+
 ## 0.5.0 — 2026-10-27
 
 ### 变更

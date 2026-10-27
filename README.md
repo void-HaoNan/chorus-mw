@@ -145,3 +145,13 @@ python tools\check_plugin_compat.py
 - **变声报 `NoneType has no attribute pipeline`**：模型没加载。`rvc_worker.py` 每次都会先调 `/infer_change_voice` 预热，正常碰不到。
 - **同一首歌重复跑**：命中 `cache/` 直接返回；改 `key_shift` 或模型都会换 key。
 - **WebUI 里有人在用**：不行。RVC 单实例、有全局状态，中间层在跑的时候别在 WebUI 上手动操作。
+
+## 分离模型（0.6.0 起）
+
+| 环节 | 模型 | 说明 |
+| --- | --- | --- |
+| 整首分离 | becruily_deux.ckpt | 输出 Vocals / Instrumental（键名大写） |
+| 去混响 | dereverb_bs_roformer_anvuew_sdr_22.5050.ckpt | RVC 里按 bs_roformer 加载 |
+| 变声 | assets/weights 里的 .pth | 插件配置 rvc_default_model 可指定 |
+
+两个模型文件放在 RVC 的 assets\\pymss_weights 里，预设清单在 tools\\pymss_webui.py。
