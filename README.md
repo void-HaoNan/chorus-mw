@@ -3,7 +3,7 @@
 RVC 翻唱中间层，给 AstrBot 的翻唱插件当后端用：
 丢一首歌进去，出来一段翻唱成品（默认 45 秒副歌，也可以自定长度或整首翻唱）。
 
-当前版本：`0.9.0`（0.8.0 打通了推理与混音参数；0.8.1 加了显存保护；0.9.0 补上音色模型目录 `/model_info` 与 `CHORUS_WEIGHTS_DIR`）。
+当前版本：`0.9.1`（0.8.0 打通了推理与混音参数；0.8.1 加了显存保护；0.9.0 补上音色模型目录 `/model_info` 与 `CHORUS_WEIGHTS_DIR`；0.9.1 把推荐启动顺序写进文档）。
 
 默认后端插件是自维护分支 `astrbot_plugin_chorus_cover`（也可接上游 `astrbot_plugin_matsuko_cover`，
 接口签名一致）。
@@ -189,10 +189,38 @@ powershell -ExecutionPolicy Bypass -File scripts\start.ps1 -Stop    :: 停掉
 
 ## 和 AstrBot 一起开机
 
-`D:\QQBOT\启动\start.ps1`（用户自己的启动器）里加了一段：AstrBot 起来后检查 3333，
-没监听就用 `CHORUS_RVC_ROOT` + `NO_PROXY` 拉起本服务，并把 `-Status` / `-Stop` 也接上了。
-启动器现在管四件事：QQ → AstrBot → 本中间层（3333）→ GPT-SoVITS API（9880），
-SnowLuma 收尾；本仓库只负责中间层自己，启动器那边是用户侧配置。
+### 推荐的启动顺序（2026-10-28 起）
+
+一条前端两个后端加一个取歌服务，**顺序不要随意换**，尤其是 AstrBot 要放最后：
+
+```
+1) QQ             —— 先登录，后面 SnowLuma 要挂它
+2) SnowLuma       —— 挂 QQ、开 5099，把 OneBot 接到 AstrBot（可以晚连，会自动重试）
+3) GPT-SoVITS API —— 9880，模型加载最慢（实测 30~120 秒），早起点
+4) RVC 中间层      —— 本服务，3333；它会自己拉 RVC WebUI（7897）
+5) 网易云取歌      —— NeteaseCloudMusicApi，3003
+6) AstrBot        —— 最后起，等前面都就绪，机器人一上线就能唱歌/点歌
+```
+
+为什么这么排：
+
+- **QQ 必须最先**：SnowLuma 是挂到已登录的 QQ 进程上的，QQ 没起来它没东西可挂。
+- **AstrBot 必须最后**：它一起来就会处理消息；如果 3333 / 3003 还没就绪，用户第一句话
+  就可能碰到「翻唱失败 / 取歌失败」。放最后能保证它上线即能用。
+- **SnowLuma 在 AstrBot 之前没关系**：它是 ws 客户端，连不上 6199 会每 5 秒重试，
+  AstrBot 起来后自动接上。
+- **本中间层在 7897 之前没关系**：`ensure_rvc()` 会自己拉起 RVC WebUI 并等端口。
+
+Windows 下的现成实现是用户侧的一键启动脚本 `D:\QQBOT\启动\start.ps1`（`-Status` / `-Stop`
+也在里面），它按上面顺序逐项检查、没起就拉起来、起完才往下走。**建议就用它启动**，
+不要手动一个个开：手动开最容易漏 3003 或 3333，表现就是「机器人能聊天但点歌/唱歌失败」。
+
+> 踩过的坑：启动器曾经用管道接网易云那一步的输出（`& powershell -File xxx.ps1 | ...`），
+> 被拉起的 node 继承了管道句柄，脚本卡在 `[4/6]` 不动、后面的 GPT-SoVITS 没机会启动
+> （服务其实已经起来了）。现在改成完全分离 + 只看端口，见 CHANGELOG 0.9.1。
+
+本仓库只负责中间层自己（3333）；AstrBot、SnowLuma、GPT-SoVITS、网易云取歌都是用户侧组件，
+启动器里怎么编排属于部署配置，不在本仓库内。
 
 ## 接口
 
