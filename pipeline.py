@@ -308,8 +308,12 @@ def _window_limits(target, available):
     return min_keep, max_keep
 
 
-def _prepare_window(source, work, target, duration):
-    """新顺序：整首混音挑候选 → 只切这一段 → 只分离这一段 → 人声里精挑。"""
+def _prepare_window(source, work, target, duration, start_hint=None):
+    """新顺序：整首混音挑候选 → 只切这一段 → 只分离这一段 → 人声里精挑。
+
+    ``start_hint`` 给了就从这一秒开始切（用户指定起点），不再自动挑段落；
+    副歌段里的说唱/念白 RVC 转出来会糊，这种时候由调用方指定起点更靠谱。
+    """
     chorus_dir = os.path.join(work, "chorus")
     sep_vocal = os.path.join(work, "sep_vocal")
     sep_inst = os.path.join(work, "sep_inst")
@@ -317,7 +321,19 @@ def _prepare_window(source, work, target, duration):
     cut_start, cut_end = 0.0, duration
     candidate = source
     margin = float(config.CHORUS_MARGIN_SECONDS)
-    if duration and duration > target + margin + 1.0:
+    forced = None
+    if start_hint is not None:
+        try:
+            forced = max(0.0, float(start_hint))
+        except (TypeError, ValueError):
+            forced = None
+    if forced is not None and duration:
+        margin = 0.0
+        cut_start = min(forced, max(0.0, duration - target - 1.0))
+        cut_end = min(duration, cut_start + target)
+        candidate = crop(source, os.path.join(chorus_dir, "candidate.wav"), cut_start, cut_end)
+        print("[chorus-mw] forced window=%.1fs-%.1fs" % (cut_start, cut_end), flush=True)
+    elif duration and duration > target + margin + 1.0:
         want = target + margin
         cut_start, cut_end = _pick_on_mix(source, chorus_dir, want, minimum=target + 2.0)
         candidate = crop(source, os.path.join(chorus_dir, "candidate.wav"), cut_start, cut_end)
@@ -327,10 +343,13 @@ def _prepare_window(source, work, target, duration):
     if not instrumental:
         raise RuntimeError("分离没有产出伴奏，无法混音")
 
-    min_keep, max_keep = _window_limits(target, span)
-    local_start, local_end = chorus.pick_window(
-        vocals, target, min_seconds=min_keep, max_seconds=max_keep
-    )
+    if forced is not None:
+        local_start, local_end = 0.0, min(span, float(target))
+    else:
+        min_keep, max_keep = _window_limits(target, span)
+        local_start, local_end = chorus.pick_window(
+            vocals, target, min_seconds=min_keep, max_seconds=max_keep
+        )
     vocal_cut = crop(vocals, os.path.join(chorus_dir, "vocal_cut.wav"), local_start, local_end)
     inst_cut = crop(instrumental, os.path.join(chorus_dir, "inst_cut.wav"), local_start, local_end)
     return {
@@ -371,7 +390,7 @@ def run(song_name_src, key_shift=0, model_dropdown="", chorus_seconds=None,
         dereverb_model=None, inst_volume_db=None, shift_instrumental=None,
         progress=None, use_cache=True, render_mode=DEFAULT_RENDER_MODE,
         f0_method=None, index_rate=None, rms_mix_rate=None, protect=None,
-        vocal_volume_db=None):
+        vocal_volume_db=None, chorus_start=None):
     """返回 (输出音频路径, 是否命中缓存, 说明文本)。
 
     render_mode:
@@ -421,6 +440,8 @@ def run(song_name_src, key_shift=0, model_dropdown="", chorus_seconds=None,
         # 0.9.3：自动移调会改变实际移调量，必须进缓存键，否则会拿到旧的 0 调产物
         "auto_pitch": bool(config.AUTO_PITCH),
         "target_f0": round(config.TARGET_F0, 1),
+        # 指定起点也是产物的一部分
+        "chorus_start": (round(float(chorus_start), 1) if chorus_start else 0),
     }
     key = cache_key(source, model, key_shift, extra)
     if use_cache:
@@ -464,7 +485,8 @@ def run(song_name_src, key_shift=0, model_dropdown="", chorus_seconds=None,
     else:
         report(8, "在整首混音上挑候选副歌")
         try:
-            window = _prepare_window(source, work, target, duration)
+            window = _prepare_window(source, work, target, duration,
+                                 start_hint=(chorus_start if mode != "full" else None))
         except Exception as error:
             print("[chorus-mw] fallback=full_separation reason=%s" % error, flush=True)
             report(12, "先切后分离失败，回退整首分离")
