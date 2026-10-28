@@ -30,6 +30,43 @@ def _envelope(path, hop=0.05):
     return env.astype("float32"), sr, len(mono) / float(sr)
 
 
+def _block_profile(env, fps, block_seconds=2.0):
+    """把包络压成 2 秒一块的归一化轮廓，用来找「重复出现的段落」。"""
+    block = max(1, int(block_seconds * fps))
+    count = len(env) // block
+    if count < 4:
+        return None, block
+    blocks = env[: count * block].reshape(count, block).mean(axis=1).astype("float64")
+    std = float(blocks.std())
+    if std < 1e-9:
+        return None, block
+    return (blocks - blocks.mean()) / std, block
+
+
+def _repetition_score(profile, block, start_idx, win_frames):
+    """候选窗口和全曲其它位置的最高相关系数。
+
+    副歌会反复出现，主歌也重复，但副歌通常重复得更整齐、更长；
+    和能量/覆盖率一起打分，能明显少切到主歌。
+    """
+    if profile is None:
+        return 0.0
+    begin = start_idx // block
+    span = max(1, win_frames // block)
+    if span < 3 or begin + span > len(profile):
+        return 0.0
+    candidate = profile[begin:begin + span]
+    best = 0.0
+    for offset in range(0, len(profile) - span + 1):
+        if abs(offset - begin) < span // 2:
+            continue  # 自己和紧邻的重叠不算
+        other = profile[offset:offset + span]
+        corr = float(np.dot(candidate, other) / span)
+        if corr > best:
+            best = corr
+    return max(0.0, min(1.0, best))
+
+
 def pick_window(vocal_path, seconds=None, hop_seconds=None,
                 min_seconds=None, max_seconds=None):
     """返回 (start_sec, end_sec)。音频比目标短就整首。
@@ -56,12 +93,17 @@ def pick_window(vocal_path, seconds=None, hop_seconds=None,
 
     csum = np.concatenate([[0.0], np.cumsum(env.astype("float64"))])
     csum_sq = np.concatenate([[0.0], np.cumsum((env > np.percentile(env, 90)).astype("float64"))])
+    profile, block = _block_profile(env, fps)
 
     best_start, best_score = 0, -1.0
     for start in range(0, len(env) - win + 1, step):
         mean_energy = (csum[start + win] - csum[start]) / win
         coverage = (csum_sq[start + win] - csum_sq[start]) / win
         score = mean_energy * (0.35 + 0.65 * coverage)
+        # 0.9.2：重复段落加权（副歌会回来），再给靠后的位置一点点优势
+        repetition = _repetition_score(profile, block, start, win)
+        position = start / max(1, len(env) - win)
+        score *= (0.7 + 0.5 * repetition) * (0.95 + 0.1 * position)
         if score > best_score:
             best_start, best_score = start, score
 
