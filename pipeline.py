@@ -418,6 +418,9 @@ def run(song_name_src, key_shift=0, model_dropdown="", chorus_seconds=None,
         "protect": round(prot, 4),
         "inst_volume_db": round(inst_db, 2),
         "vocal_volume_db": round(vocal_db, 2),
+        # 0.9.3：自动移调会改变实际移调量，必须进缓存键，否则会拿到旧的 0 调产物
+        "auto_pitch": bool(config.AUTO_PITCH),
+        "target_f0": round(config.TARGET_F0, 1),
     }
     key = cache_key(source, model, key_shift, extra)
     if use_cache:
@@ -472,6 +475,28 @@ def run(song_name_src, key_shift=0, model_dropdown="", chorus_seconds=None,
             window.get("sep_span", 0), window["start"], window["end"]))
         print("[chorus-mw] window=%.1fs-%.1fs sep_span=%.1fs" % (
             window["start"], window["end"], window.get("sep_span", 0)), flush=True)
+
+    # 0.9.3：按音域自动移调。调用方没指定升降调（key_shift=0）时，
+    # 先量这段人声的中位基频，再把它挪到目标区间；人声和伴奏一起挪。
+    auto_shift_note = ""
+    if key_shift == 0 and config.AUTO_PITCH:
+        try:
+            import pitch as pitch_mod
+            auto_semis, measured_hz = pitch_mod.auto_shift(vocal_cut, config.TARGET_F0, config.MAX_AUTO_SHIFT)
+            if auto_semis:
+                key_shift = auto_semis
+                shift_instrumental = float(auto_semis)
+                auto_shift_note = "自动移调 %+d 半音（人声 %.0fHz → 目标 %.0fHz）" % (
+                    auto_semis, measured_hz, config.TARGET_F0)
+                print("[chorus-mw] auto_pitch measured=%.1fHz target=%.0fHz shift=%+d" % (
+                    measured_hz, config.TARGET_F0, auto_semis), flush=True)
+                report(57, auto_shift_note)
+            else:
+                auto_shift_note = "自动移调 0 半音（人声 %.0fHz 已在目标附近）" % measured_hz
+                print("[chorus-mw] auto_pitch measured=%.1fHz target=%.0fHz shift=0" % (
+                    measured_hz, config.TARGET_F0), flush=True)
+        except Exception as error:
+            print("[chorus-mw] auto_pitch failed: %s" % error, flush=True)
 
     # 并行：伴奏切段+移调（CPU / rubberband）与去混响（GPU）同时开跑
     executor = ThreadPoolExecutor(max_workers=1)
@@ -536,6 +561,8 @@ def run(song_name_src, key_shift=0, model_dropdown="", chorus_seconds=None,
     shutil.rmtree(work, ignore_errors=True)
     note = "模式 %s，窗口 %.1fs-%.1fs，耗时 %.1fs" % (
         mode, window["start"], window["end"], total)
+    if auto_shift_note:
+        note += "，" + auto_shift_note
     return final, False, note
 
 

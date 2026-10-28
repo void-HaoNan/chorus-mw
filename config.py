@@ -11,7 +11,7 @@ import os
 HOME = os.path.dirname(os.path.abspath(__file__))
 
 # 服务版本（和 CHANGELOG / README 对齐），启动日志与 /cache_info 都会带出来
-VERSION = "0.9.2"
+VERSION = "0.9.3"
 
 
 class ConfigError(RuntimeError):
@@ -67,6 +67,14 @@ CHORUS_MAX_SECONDS = 50.0  # 软切后允许的上限
 CHORUS_SNAP = 4.0          # 软切时在目标前后各找多少秒的换气点
 # 先切后分离时的余量：候选窗口 = 目标时长 + 这么多秒，留给人声里精挑和换气点吸附
 CHORUS_MARGIN_SECONDS = float(os.environ.get("CHORUS_MARGIN_SECONDS", "15"))
+
+# 按音域自动移调（0.9.3）：调用方 key_shift=0 时，先测源人声的中位基频，
+# 再把它挪到 TARGET_F0 附近（女声约 200~240Hz）。设 CHORUS_AUTO_PITCH=0 可关掉。
+AUTO_PITCH = os.environ.get("CHORUS_AUTO_PITCH", "0").strip().lower() not in (
+    "0", "false", "off", "no",
+)
+TARGET_F0 = float(os.environ.get("CHORUS_TARGET_F0", "240"))
+MAX_AUTO_SHIFT = int(os.environ.get("CHORUS_MAX_AUTO_SHIFT", "12"))
 
 # 常驻 worker（分离/去混响/变声共用一个进程，省掉每次 3~5 秒的导入）
 RESIDENT_ENABLED = os.environ.get("CHORUS_RESIDENT", "1").strip().lower() not in (

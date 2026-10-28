@@ -3,7 +3,7 @@
 RVC 翻唱中间层，给 AstrBot 的翻唱插件当后端用：
 丢一首歌进去，出来一段翻唱成品（默认 45 秒副歌，也可以自定长度或整首翻唱）。
 
-当前版本：`0.9.1`（0.8.0 打通了推理与混音参数；0.8.1 加了显存保护；0.9.0 补上音色模型目录 `/model_info` 与 `CHORUS_WEIGHTS_DIR`；0.9.1 把推荐启动顺序写进文档）。
+当前版本：`0.9.3`（0.8.0 打通了推理与混音参数；0.8.1 加了显存保护；0.9.0 补上音色模型目录 `/model_info` 与 `CHORUS_WEIGHTS_DIR`；0.9.1 把推荐启动顺序写进文档）。
 
 默认后端插件是自维护分支 `astrbot_plugin_chorus_cover`（也可接上游 `astrbot_plugin_matsuko_cover`，
 接口签名一致）。
@@ -107,6 +107,17 @@ gradio_client 2.x 读到 `protocol: ws` 会直接抛 `Unknown protocol: ws`；0.
   显存紧就设 `CHORUS_RESIDENT=0` 退回每次起进程。
 
 
+## 按音域自动移调（0.9.3，默认关闭）
+
+调用方没传升降调（key_shift=0）时，先测源人声的中位基频，再挪到 CHORUS_TARGET_F0（默认 240Hz）
+附近，人声和伴奏一起挪。实测同一首男声歌「不移调」听感更贴模型，所以默认关着：
+
+`powershell
+$env:CHORUS_AUTO_PITCH = '1'   # 想试再打开
+$env:CHORUS_TARGET_F0  = '240' # 目标音域
+`
+
+harvest 这个整合包不支持（infer/vc/pipeline.py 只认 pm/rmvpe/fcpe），别往那条路折腾。
 ## 显存保护（0.8.1）
 
 8 GB 卡上这套东西很容易把显存顶满：常驻程序（GPT-SoVITS 2.0 GB、RVC WebUI 0.8 GB、

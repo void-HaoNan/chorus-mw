@@ -1,5 +1,19 @@
 # CHANGELOG
 
+## 0.9.3 — 2026-10-29
+
+**按音域自动移调（默认关闭）。**
+
+- 新增 `pitch.py`：用自相关估源人声的中位基频，再算「挪到目标区间需要几个半音」，
+  只依赖 numpy + soundfile，几十毫秒；带八度误判修正（男声 160Hz 被自相关测成 320Hz 的情况）。
+- `pipeline.run()` 在 `key_shift=0` 且 `CHORUS_AUTO_PITCH=1` 时自动移调，人声和伴奏一起挪；
+  `/convert` 的缓存键加入了 `auto_pitch` 和 `target_f0`，避免拿到旧的 0 调产物。
+- 默认**关闭**（`CHORUS_AUTO_PITCH=0`）：实测同一首男声歌，A/B 听感上「不移调」比自动移调更贴模型，
+  所以只把这个能力留在仓库里，需要时开环境变量。
+- 可调：`CHORUS_TARGET_F0`（默认 240）、`CHORUS_MAX_AUTO_SHIFT`（默认 12）。
+- 另：`harvest` 在本整合包里不支持（`infer/vc/pipeline.py` 只认 pm/rmvpe/fcpe），
+  补装 pyworld 也没用，别再往这个方向试。
+
 ## 0.9.2 — 2026-10-29
 
 **副歌挑选不再只看「哪段最响」。** 实测《晴天》这种主歌也有力气的歌，旧算法会切在
