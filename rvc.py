@@ -325,19 +325,27 @@ def _worker(task, input_path, vocal_dir, inst_dir, timeout=1800):
 
 
 def _pick_newest(directory, keywords):
+    """取目录里最新的音频；关键词对不上时退回「任意最新」。
+
+    不同分离模型输出的命名不一样（vocals / main_vocal / noreverb…），
+    只按固定关键词找会在「提主旋律」这类模型上误判成没产出。
+    """
     best, best_mtime = None, -1.0
+    fallback, fallback_mtime = None, -1.0
     if not os.path.isdir(directory):
         return None
     for name in os.listdir(directory):
         if not name.lower().endswith((".wav", ".flac")):
             continue
-        if keywords and not any(k in name.lower() for k in keywords):
-            continue
         path = os.path.join(directory, name)
         mtime = os.path.getmtime(path)
+        if mtime > fallback_mtime:
+            fallback, fallback_mtime = path, mtime
+        if keywords and not any(k in name.lower() for k in keywords):
+            continue
         if mtime > best_mtime:
             best, best_mtime = path, mtime
-    return best
+    return best or fallback
 
 
 SEP_TASKS = {

@@ -11,7 +11,7 @@ import os
 HOME = os.path.dirname(os.path.abspath(__file__))
 
 # 服务版本（和 CHANGELOG / README 对齐），启动日志与 /cache_info 都会带出来
-VERSION = "0.9.4"
+VERSION = "0.9.5"
 
 
 class ConfigError(RuntimeError):
@@ -92,7 +92,7 @@ OOM_RETRY_WAIT_SECONDS = float(os.environ.get("CHORUS_OOM_RETRY_WAIT_SECONDS", "
 
 # 分离模型（RVC WebUI 下拉框里的中文标签，不能改）
 # 2026-10-27 起默认走 Studio 那套：becruily_deux 分离 + anvuew 22.5050 去混响
-SEP_MODEL = os.environ.get("CHORUS_SEP_MODEL", "去伴奏（becruily deux）")
+SEP_MODEL = os.environ.get("CHORUS_SEP_MODEL", "提主旋律")
 DERERVERB_MODEL = os.environ.get("CHORUS_DEREVERB_MODEL", "去混响（anvuew 22.505）")
 
 # 推理默认值（调用方没传 / 传了非法值时用这些）

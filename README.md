@@ -107,6 +107,15 @@ gradio_client 2.x 读到 `protocol: ws` 会直接抛 `Unknown protocol: ws`；0.
   显存紧就设 `CHORUS_RESIDENT=0` 退回每次起进程。
 
 
+## 分离与去混响（0.9.5）
+
+默认走「提主旋律」：karaoke 模型先把主唱从和声里剥出来，再用 anvuew 去混响，最后才进 RVC。
+副歌叠双人声的歌，这一步能明显减少发糊和电音。想换回普通分离：
+
+`powershell
+$env:CHORUS_SEP_MODEL = '去伴奏'        # BS-Roformer，通用分离
+$env:CHORUS_SEP_MODEL = '去伴奏（becruily deux）'  # 更快，质量差一些
+`
 ## 按音域自动移调（0.9.3，默认关闭）
 
 调用方没传升降调（key_shift=0）时，先测源人声的中位基频，再挪到 CHORUS_TARGET_F0（默认 240Hz）
