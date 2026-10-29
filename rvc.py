@@ -157,7 +157,8 @@ class _ResidentWorker:
         self._failures = 0
         self._disabled_until = 0.0
         self._last_error = ""
-        self.stats = {"requests": 0, "ok": 0, "fallback": 0, "starts": 0}
+        self._tasks_since_start = 0
+        self.stats = {"requests": 0, "ok": 0, "fallback": 0, "starts": 0, "recycles": 0}
 
     # -------- 生命周期 --------
     def available(self):
@@ -262,6 +263,13 @@ class _ResidentWorker:
                         raise RuntimeError(str(data.get("error") or "常驻 worker 返回失败"))
                     self._failures = 0
                     self.stats["ok"] += 1
+                    self._tasks_since_start += 1
+                    if self._tasks_since_start >= getattr(config, "RESIDENT_RECYCLE_TASKS", 4):
+                        # 换新进程，把 torch/LLVM 攒下的碎片内存一起释放
+                        self._tasks_since_start = 0
+                        self.stats["recycles"] += 1
+                        self._close_locked()
+                        print("[chorus-mw] resident worker 达到回收阈值，已换新进程", flush=True)
                     return data
             except Exception as error:
                 self._failures += 1
@@ -305,6 +313,44 @@ def resident_status():
 
 
 # ---------------- 旧路：每次起一个新进程（兜底） ----------------
+
+def _free_ram_mb():
+    """当前可用物理内存（MB）。取不到就返回 None。"""
+    try:
+        import ctypes
+
+        class MEMORYSTATUSEX(ctypes.Structure):
+            _fields_ = [
+                ("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+            ]
+
+        status = MEMORYSTATUSEX()
+        status.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+        ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status))
+        return int(status.ullAvailPhys / 1024 / 1024)
+    except Exception:
+        return None
+
+
+def _wait_for_ram(min_mb=None):
+    """内存不够就先等，最多等 20 秒；等不到就抛错，别硬跑把进程跑崩。"""
+    need = int(min_mb or getattr(config, "MIN_FREE_RAM_MB", 2500))
+    deadline = time.time() + 20
+    while time.time() < deadline:
+        free = _free_ram_mb()
+        if free is None or free >= need:
+            return
+        print("[chorus-mw] 可用内存只有 %dMB（要求 %dMB），等 2 秒再试" % (free, need), flush=True)
+        time.sleep(2)
+    free = _free_ram_mb()
+    raise RuntimeError(
+        "内存不足（可用 %sMB，要求 %sMB）：关掉浏览器/直播伴侣/其他吃内存的程序再试" % (free, need)
+    )
+
 
 def _worker(task, input_path, vocal_dir, inst_dir, timeout=1800):
     os.makedirs(vocal_dir, exist_ok=True)
@@ -456,6 +502,7 @@ def _run_task(task, input_path, vocal_dir, inst_dir, timeout=1800):
 
 def separate(song_path, vocal_dir, inst_dir, model_label=None):
     """分离，返回 (人声, 伴奏)。整首或一小段都走这里。"""
+    _wait_for_ram()
     label = model_label or config.SEP_MODEL
     task = SEP_TASKS.get(label, "sep")
     _run_task(task, song_path, vocal_dir, inst_dir)
@@ -470,6 +517,7 @@ def separate(song_path, vocal_dir, inst_dir, model_label=None):
 
 def dereverb(vocal_path, out_vocal_dir, out_rest_dir, model_label=None):
     """去混响，返回 *_noreverb 文件。"""
+    _wait_for_ram()
     label = model_label or config.DERERVERB_MODEL
     task = DEREVERB_TASKS.get(label, "dereverb")
     _run_task(task, vocal_path, out_vocal_dir, out_rest_dir)

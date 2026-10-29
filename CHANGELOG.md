@@ -1,5 +1,23 @@
 # CHANGELOG
 
+## 0.9.11 — 2026-10-29
+
+**修中间层被内存耗尽打崩（c10.dll 访问冲突），并加守护重启。**
+
+现场：日志里先出现 `LLVM ERROR: out of memory`，接着 `CUDA error: unknown error`，
+最后进程以 `0xC0000005`（c10.dll）直接消失，3333 端口没了。根因不是显存，是**整机内存**：
+常驻 worker 跑久了，torch/LLVM 的碎片内存不归还，叠加浏览器、桌宠、直播伴侣、QQ，
+16G 物理内存被吃穿，分离子进程直接 abort。
+
+- 常驻 worker 每跑 4 首换一个新进程（`CHORUS_RESIDENT_RECYCLE`），把碎片内存一起释放；
+- 分离/去混响前先看可用物理内存，低于 2500MB 就等最多 20 秒，等不到就直接报
+  「内存不足（可用 xxxMB）」而不是硬跑崩进程（`CHORUS_MIN_FREE_RAM_MB`）；
+- 新增守护启动器 `start_supervisor.ps1` / `start_supervisor.bat`：进程退出自动重启，
+  每次重启写 `_work/supervisor.log`，崩溃间隔太短会退避；
+- 实测：跑完整首（51 秒分离跨度）64 秒出成品，回收日志正常触发。
+- 版本号 0.9.10 → 0.9.11。
+
+
 ## 0.9.10 — 2026-10-29
 
 **清理旧版本残留。**

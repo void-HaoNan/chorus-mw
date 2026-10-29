@@ -370,3 +370,12 @@ python tools\check_plugin_compat.py
 - `CHORUS_VOCAL_DUCK=0`：只关伴奏让位，保留高通和压缩；
 - `CHORUS_NORMALIZE=loudnorm`：回到旧的 loudnorm 响度归一（会压动态，仅用于对比）。
 
+## 守护启动（0.9.11 起）
+
+中间层可能因为整机内存耗尽被系统打崩（日志表现为 `LLVM ERROR: out of memory` 后接
+`CUDA error: unknown error`，进程以 `0xC0000005` 退出）。用守护启动器跑：
+
+- 双击 `start_supervisor.bat`，或 `powershell -File start_supervisor.ps1`；
+- 进程退出会自动重启，重启记录在 `_work/supervisor.log`；
+- 常驻 worker 每 4 首自动换新进程，分离前检查可用内存（阈值 2500MB）。
+

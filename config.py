@@ -11,7 +11,7 @@ import os
 HOME = os.path.dirname(os.path.abspath(__file__))
 
 # 服务版本（和 CHANGELOG / README 对齐），启动日志与 /cache_info 都会带出来
-VERSION = "0.9.10"
+VERSION = "0.9.11"
 
 
 class ConfigError(RuntimeError):
@@ -102,6 +102,11 @@ NORMALIZE_MODE = os.environ.get("CHORUS_NORMALIZE", "peak").strip().lower()
 # 人声链：高通 + 轻压缩，顺手让伴奏侧链让位；默认关，A/B 通过再开
 VOCAL_CHAIN = os.environ.get("CHORUS_VOCAL_CHAIN", "1") == "1"
 VOCAL_CHAIN_DUCK = os.environ.get("CHORUS_VOCAL_DUCK", "1") == "1"
+# 常驻 worker 跑几首就换一个新进程：torch/LLVM 的碎片内存不会自己还回去，
+# 攒多了就会 LLVM ERROR: out of memory 然后 c10.dll 崩溃。
+RESIDENT_RECYCLE_TASKS = int(os.environ.get("CHORUS_RESIDENT_RECYCLE", "4"))
+# 分离前的最低可用内存（MB），不够就先等一等，别硬跑到 OOM 崩进程
+MIN_FREE_RAM_MB = int(os.environ.get("CHORUS_MIN_FREE_RAM_MB", "2500"))
 DERERVERB_MODEL = os.environ.get("CHORUS_DEREVERB_MODEL", "去混响（anvuew 22.505）")
 
 # 推理默认值（调用方没传 / 传了非法值时用这些）
