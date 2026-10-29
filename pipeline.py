@@ -153,9 +153,11 @@ def pitch_shift(src, dst, semitones, timeout=300):
 
 def mix(vocal_path, inst_path, out_path, inst_volume_db=-2.0, shift_instrumental=0.0,
         vocal_volume_db=0.0):
-    """人声轨按 vocal_volume_db、伴奏轨按 inst_volume_db 各自乘增益后再混。
+    """人声与伴奏按各自增益相加，只做峰值归一，不做动态压缩。
 
-    两个音量都是 dB（0 表示原样，负数是压小），换算成线性倍数再交给 ffmpeg 的 volume。
+    以前这里挂的是单遍 `loudnorm`：它为了打到 -14 LUFS 会动态压缩，听感上「上下空间」
+    被压扁。现在改成两步——先混出临时文件，量一下峰值，再整体加一个固定增益到 -1.5 dBFS。
+    固定增益只改整体音量，不动动态范围，鼓点和弱音之间的落差保住了。
     """
     vol = 10.0 ** (float(inst_volume_db) / 20.0)
     vocal_vol = 10.0 ** (float(vocal_volume_db) / 20.0)
@@ -167,26 +169,55 @@ def mix(vocal_path, inst_path, out_path, inst_volume_db=-2.0, shift_instrumental
             "_inst_shift_%d.wav" % int(time.time() * 1000),
         )
         shifted_inst = pitch_shift(inst_path, temp, shift_instrumental)
+    raw = os.path.join(os.path.dirname(out_path) or ".", "_mix_raw_%d.wav" % int(time.time() * 1000))
     try:
         graph = (
             "[0:a]aresample=44100,aformat=channel_layouts=stereo,volume=%.4f[a];"
             "[1:a]aresample=44100,aformat=channel_layouts=stereo,volume=%.4f[b];"
-            "[a][b]amix=inputs=2:duration=longest,volume=2.0,"
-            "loudnorm=I=-14:TP=-1.5:LRA=11" % (vocal_vol, vol)
+            "[a][b]amix=inputs=2:duration=longest,volume=2.0"
+            % (vocal_vol, vol)
         )
         _run([
             config.FFMPEG, "-y", "-v", "error",
             "-i", vocal_path, "-i", shifted_inst,
             "-filter_complex", graph,
+            "-ar", "44100", "-c:a", "pcm_s16le", raw,
+        ])
+        peak_db = _measure_peak_db(raw)
+        gain_db = 0.0
+        if peak_db is not None and peak_db < 0:
+            gain_db = max(-12.0, min(24.0, -1.5 - peak_db))
+        _run([
+            config.FFMPEG, "-y", "-v", "error",
+            "-i", raw,
+            "-af", "volume=%.2fdB" % gain_db if abs(gain_db) > 0.05 else "anull",
             "-ar", "44100", "-c:a", "pcm_s16le", out_path,
         ])
+        print("[chorus-mw] mix peak=%.1f dBFS gain=%+.1f dB（只做峰值归一，不压缩动态）" % (
+            peak_db if peak_db is not None else 0.0, gain_db), flush=True)
     finally:
-        if temp and os.path.exists(temp):
-            try:
-                os.remove(temp)
-            except OSError:
-                pass
+        for leftover in (temp, raw):
+            if leftover and os.path.exists(leftover):
+                try:
+                    os.remove(leftover)
+                except OSError:
+                    pass
     return out_path
+
+
+def _measure_peak_db(path):
+    """用 ffmpeg volumedetect 量峰值，量不到返回 None。"""
+    try:
+        result = _run([
+            config.FFMPEG, "-hide_banner", "-i", path, "-af", "volumedetect",
+            "-f", "null", "-",
+        ], timeout=120)
+    except Exception as error:
+        print("[chorus-mw] 峰值测量失败（%s），不做归一" % error, flush=True)
+        return None
+    output = (result.stderr or b"").decode("utf-8", "ignore")
+    match = re.search(r"max_volume:\s*(-?[0-9.]+)\s*dB", output)
+    return float(match.group(1)) if match else None
 
 
 def _prepare_instrumental(inst_cut, work, semitones):
