@@ -171,18 +171,54 @@ def mix(vocal_path, inst_path, out_path, inst_volume_db=-2.0, shift_instrumental
         shifted_inst = pitch_shift(inst_path, temp, shift_instrumental)
     raw = os.path.join(os.path.dirname(out_path) or ".", "_mix_raw_%d.wav" % int(time.time() * 1000))
     try:
-        graph = (
-            "[0:a]aresample=44100,aformat=channel_layouts=stereo,volume=%.4f[a];"
-            "[1:a]aresample=44100,aformat=channel_layouts=stereo,volume=%.4f[b];"
-            "[a][b]amix=inputs=2:duration=longest,volume=2.0"
-            % (vocal_vol, vol)
-        )
+        if config.VOCAL_CHAIN:
+            # 人声：切掉 85Hz 以下的隆隆声，再轻压 2.5:1 把强弱拉稳；
+            # 伴奏：用侧链压缩在人声出现时退一点，人声就不会被埋。
+            vocal_chain = (
+                "[0:a]aresample=44100,aformat=channel_layouts=stereo,volume=%.4f,"
+                "highpass=f=85,acompressor=threshold=-18dB:ratio=2.5:attack=8:release=180,"
+                "asplit=2[voice][key]"
+                % vocal_vol
+            )
+            if config.VOCAL_CHAIN_DUCK:
+                graph = (
+                    vocal_chain + ";"
+                    "[1:a]aresample=44100,aformat=channel_layouts=stereo,volume=%.4f[bed];"
+                    "[bed][key]sidechaincompress=threshold=0.05:ratio=1.8:attack=15:release=250[ducked];"
+                    "[voice][ducked]amix=inputs=2:duration=longest,volume=2.0"
+                    % vol
+                )
+            else:
+                graph = (
+                    vocal_chain + ";"
+                    "[1:a]aresample=44100,aformat=channel_layouts=stereo,volume=%.4f[bed];"
+                    "[voice][bed]amix=inputs=2:duration=longest,volume=2.0"
+                    % vol
+                )
+        else:
+            graph = (
+                "[0:a]aresample=44100,aformat=channel_layouts=stereo,volume=%.4f[a];"
+                "[1:a]aresample=44100,aformat=channel_layouts=stereo,volume=%.4f[b];"
+                "[a][b]amix=inputs=2:duration=longest,volume=2.0"
+                % (vocal_vol, vol)
+            )
+        if config.NORMALIZE_MODE == "loudnorm":
+            graph += ",loudnorm=I=-14:TP=-1.5:LRA=11"
         _run([
             config.FFMPEG, "-y", "-v", "error",
             "-i", vocal_path, "-i", shifted_inst,
             "-filter_complex", graph,
             "-ar", "44100", "-c:a", "pcm_s16le", raw,
         ])
+        if config.NORMALIZE_MODE == "loudnorm":
+            _run([
+                config.FFMPEG, "-y", "-v", "error",
+                "-i", vocal_path, "-i", shifted_inst,
+                "-filter_complex", graph,
+                "-ar", "44100", "-c:a", "pcm_s16le", out_path,
+            ])
+            print("[chorus-mw] mix 使用 loudnorm（旧行为）", flush=True)
+            return out_path
         peak_db = _measure_peak_db(raw)
         gain_db = 0.0
         if peak_db is not None and peak_db < 0:
@@ -274,6 +310,9 @@ def cache_key(source, model, key_shift, extra):
         "shift": key_shift,
         # 模式与目标时长必须进 key：同一首歌 chorus 和 full 是两个完全不同的成品
         "mode": extra.get("mode", DEFAULT_RENDER_MODE),
+        # 混音链和响度模式也会改变成品，进 key 才不会拿错缓存
+        "norm": config.NORMALIZE_MODE,
+        "chain": [bool(config.VOCAL_CHAIN), bool(config.VOCAL_CHAIN_DUCK)],
         "chorus": extra.get("target", config.CHORUS_SECONDS),
         "sep": config.SEP_MODEL,
         "dereverb": extra.get("dereverb", config.DERERVERB_MODEL),

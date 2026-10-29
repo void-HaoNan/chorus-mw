@@ -350,3 +350,23 @@ python tools\check_plugin_compat.py
 | 变声 | assets/weights 里的 .pth | 插件配置 rvc_default_model 可指定 |
 
 两个模型文件放在 RVC 的 assets\\pymss_weights 里，预设清单在 tools\\pymss_webui.py。
+
+## 混音链（0.9.9 起默认开启）
+
+成品最后一步不再是「人声 + 伴奏直接相加」，而是：
+
+| 步骤 | 处理 | 参数 |
+| --- | --- | --- |
+| 1 | 人声高通 | 85 Hz，去掉低频闷声和隆隆声 |
+| 2 | 人声轻压缩 | 2.5:1，阈值 -18 dB，attack 8ms / release 180ms |
+| 3 | 伴奏侧链让位 | 1.8:1，人声出现时伴奏自动退一点 |
+| 4 | 峰值归一 | 整体增益到 -1.5 dBFS，不做动态压缩 |
+
+全在同一次 ffmpeg 渲染里完成，四十五秒片段总耗时基本不变（33 秒上下）。
+
+开关：
+
+- `CHORUS_VOCAL_CHAIN=0`：关掉整条人声链，回到纯相加 + 峰值归一；
+- `CHORUS_VOCAL_DUCK=0`：只关伴奏让位，保留高通和压缩；
+- `CHORUS_NORMALIZE=loudnorm`：回到旧的 loudnorm 响度归一（会压动态，仅用于对比）。
+
