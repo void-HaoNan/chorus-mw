@@ -11,7 +11,7 @@ import os
 HOME = os.path.dirname(os.path.abspath(__file__))
 
 # 服务版本（和 CHANGELOG / README 对齐），启动日志与 /cache_info 都会带出来
-VERSION = "0.9.11"
+VERSION = "0.9.12"
 
 
 class ConfigError(RuntimeError):
@@ -106,7 +106,7 @@ VOCAL_CHAIN_DUCK = os.environ.get("CHORUS_VOCAL_DUCK", "1") == "1"
 # 攒多了就会 LLVM ERROR: out of memory 然后 c10.dll 崩溃。
 RESIDENT_RECYCLE_TASKS = int(os.environ.get("CHORUS_RESIDENT_RECYCLE", "4"))
 # 分离前的最低可用内存（MB），不够就先等一等，别硬跑到 OOM 崩进程
-MIN_FREE_RAM_MB = int(os.environ.get("CHORUS_MIN_FREE_RAM_MB", "2500"))
+MIN_FREE_RAM_MB = int(os.environ.get("CHORUS_MIN_FREE_RAM_MB", "1000"))
 DERERVERB_MODEL = os.environ.get("CHORUS_DEREVERB_MODEL", "去混响（anvuew 22.505）")
 
 # 推理默认值（调用方没传 / 传了非法值时用这些）
@@ -128,6 +128,24 @@ DEFAULT_VOCAL_VOLUME_DB = float(os.environ.get("CHORUS_VOCAL_VOLUME_DB", "0.0"))
 # 网易云兜底下载（插件传歌名而不是文件路径时用）
 NETEASE_SEARCH = "http://music.163.com/api/search/get/web"
 NETEASE_PARSE = "https://www.hhlqilongzhu.cn/api/dg_wyymusic.php"
+# 本地网易云 API（D:\PYMSS-RVC\netease-api，默认 3003）：能取会员歌直链，
+# cookie 从 AstrBot 翻唱插件的配置里读，读不到就空着。
+NETEASE_API_BASE = os.environ.get("CHORUS_NETEASE_API", "http://127.0.0.1:3003").rstrip("/")
+
+
+def _plugin_netease_cookie():
+    if os.environ.get("CHORUS_NETEASE_COOKIE"):
+        return os.environ["CHORUS_NETEASE_COOKIE"]
+    path = r"C:\Users\21903\data\config\astrbot_plugin_chorus_cover_config.json"
+    try:
+        import json as _json
+        with open(path, "r", encoding="utf-8-sig") as handle:
+            return str(_json.load(handle).get("netease_cookie") or "")
+    except Exception:
+        return ""
+
+
+NETEASE_COOKIE = _plugin_netease_cookie()
 
 
 def ensure_dirs():

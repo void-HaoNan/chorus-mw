@@ -63,10 +63,80 @@ def resolve_source(song_name_src):
     return download_netease(name)
 
 
+# 取歌时排除的版本词：翻唱、伴奏、现场这些都不是原唱
+_COVER_WORDS = ("翻唱", "cover", "伴奏", "instrumental", "纯音乐", "karaoke", "铃声", "dj", "remix", "现场", "live", "合唱", "片段")
+
+
+def _score_song(song, keyword):
+    """给网易云搜索结果打分：原唱优先，翻唱/伴奏/现场靠后。"""
+    name = str(song.get("name") or "")
+    artists = song.get("artists") or song.get("ar") or []
+    artist_text = " ".join(str(a.get("name") or "") for a in artists if isinstance(a, dict))
+    stem = keyword.split()[0] if keyword else ""
+    score = 0
+    if name == stem:
+        score += 100
+    elif stem and stem in name:
+        score += 70
+    for word in _COVER_WORDS:
+        if word in name.lower() or word in artist_text.lower():
+            score -= 45
+            break
+    if artist_text and artist_text in keyword:
+        score += 45
+    duration = song.get("duration") or song.get("dt") or 0
+    if isinstance(duration, (int, float)) and 0 < duration < 60000:
+        score -= 40  # 不足 60 秒的试听片段
+    return score
+
+
+def download_netease_via_api(keyword):
+    """走本地 3003 API：先搜索并按原唱优先打分，再取直链下载。"""
+    import requests
+
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    base = config.NETEASE_API_BASE
+    search = requests.get(
+        base + "/search",
+        params={"keywords": keyword[:60], "limit": 10},
+        headers=headers, timeout=20,
+    ).json()
+    songs = (search.get("result") or {}).get("songs") or []
+    if not songs:
+        raise RuntimeError("网易云搜不到这首歌：%s" % keyword)
+    best = max(songs, key=lambda item: _score_song(item, keyword))
+    cookie = str(getattr(config, "NETEASE_COOKIE", "") or "")
+    detail = requests.get(
+        base + "/song/url/v1",
+        params={"id": best["id"], "level": "exhigh", "cookie": cookie},
+        headers=headers, timeout=25,
+    ).json()
+    items = detail.get("data") or []
+    url = (items[0].get("url") if items else "") or ""
+    if not url:
+        raise RuntimeError("网易云没给播放地址（可能没版权）：%s" % best.get("name"))
+    out = os.path.join(config.WORK_DIR, "dl", _safe(best.get("name") or keyword) + ".mp3")
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    with requests.get(url, headers=headers, timeout=120, stream=True) as resp:
+        resp.raise_for_status()
+        with open(out, "wb") as f:
+            for chunk in resp.iter_content(1 << 20):
+                f.write(chunk)
+    if os.path.getsize(out) < 100 * 1024:
+        raise RuntimeError("下载到的文件太小，可能被风控：%s" % out)
+    print("[chorus-mw] 取歌成功（本地 API）：%s / %s" % (
+        best.get("name"), "、".join(str(a.get("name")) for a in (best.get("artists") or []) if isinstance(a, dict))), flush=True)
+    return out
+
+
 def download_netease(keyword):
     import requests
 
     os.makedirs(os.path.join(config.WORK_DIR, "dl"), exist_ok=True)
+    try:
+        return download_netease_via_api(keyword)
+    except Exception as api_error:
+        print("[chorus-mw] 本地 API 取歌失败（%s），回退老路子" % str(api_error)[:100], flush=True)
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
         "Referer": "http://music.163.com",
@@ -82,12 +152,21 @@ def download_netease(keyword):
     if not songs:
         raise RuntimeError("网易云搜不到这首歌：%s" % query)
     song = songs[0]
-    detail = requests.get(
-        config.NETEASE_PARSE,
-        params={"id": song["id"], "br": 7, "type": "json"},
-        headers=headers,
-        timeout=25,
-    ).json()
+    params = {"id": song["id"], "br": 7, "type": "json"}
+    try:
+        detail = requests.get(config.NETEASE_PARSE, params=params, headers=headers, timeout=25).json()
+    except requests.exceptions.SSLError as error:
+        # 这个备用解析站的证书 2026-10 过期了；证书链不可信但内容只是播放地址，
+        # 退一步跳过校验继续拿，拿不到再报人话。
+        print("[chorus-mw] 备用解析源证书校验失败（%s），改用不校验继续" % str(error)[:80], flush=True)
+        try:
+            detail = requests.get(
+                config.NETEASE_PARSE, params=params, headers=headers, timeout=25, verify=False
+            ).json()
+        except Exception as inner:
+            raise RuntimeError("网易云没给播放地址，备用解析源也不可用：%s" % str(inner)[:80])
+    except Exception as error:
+        raise RuntimeError("网易云没给播放地址，备用解析源请求失败：%s" % str(error)[:80])
     url = detail.get("music_url")
     if not url:
         raise RuntimeError("网易云没给播放地址：%s" % query)
