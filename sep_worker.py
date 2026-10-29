@@ -38,6 +38,11 @@ def main():
     args = parser.parse_args()
 
     app = os.path.abspath(args.app)
+    # RVC 便携版 python 的 sys.path[0] 是 runtime 目录，不是脚本目录，
+    # 所以必须把自己的目录显式加进去，否则 import sep_guard 会失败。
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path:
+        sys.path.insert(0, here)
     label = TASKS[args.task]
 
     # 关键：清掉 argv，避免被 RVC 的 Config() 当成自己的参数

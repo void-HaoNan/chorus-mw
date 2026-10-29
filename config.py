@@ -11,7 +11,7 @@ import os
 HOME = os.path.dirname(os.path.abspath(__file__))
 
 # 服务版本（和 CHANGELOG / README 对齐），启动日志与 /cache_info 都会带出来
-VERSION = "0.9.7"
+VERSION = "0.9.8"
 
 
 class ConfigError(RuntimeError):
@@ -66,7 +66,7 @@ CHORUS_MIN_SECONDS = 40.0  # 软切后允许的下限（默认 45 秒模式，�
 CHORUS_MAX_SECONDS = 50.0  # 软切后允许的上限
 CHORUS_SNAP = 4.0          # 软切时在目标前后各找多少秒的换气点
 # 先切后分离时的余量：候选窗口 = 目标时长 + 这么多秒，留给人声里精挑和换气点吸附
-CHORUS_MARGIN_SECONDS = float(os.environ.get("CHORUS_MARGIN_SECONDS", "15"))
+CHORUS_MARGIN_SECONDS = float(os.environ.get("CHORUS_MARGIN_SECONDS", "6"))
 
 # 按音域自动移调（0.9.3）：调用方 key_shift=0 时，先测源人声的中位基频，
 # 再把它挪到 TARGET_F0 附近（女声约 200~240Hz）。设 CHORUS_AUTO_PITCH=0 可关掉。
@@ -96,6 +96,7 @@ SEP_MODEL = os.environ.get("CHORUS_SEP_MODEL", "提主旋律")
 # 0.9.6：两段式分离——先用通用模型分人声/伴奏，再从人声里拆主唱（业内标准做法）
 TWO_STAGE = os.environ.get("CHORUS_TWO_STAGE", "0").strip().lower() not in ("0", "false", "off", "")
 SEP_FIRST_MODEL = os.environ.get("CHORUS_SEP_FIRST_MODEL", "去伴奏")
+SEP_FALLBACK_MODEL = os.environ.get("CHORUS_SEP_FALLBACK", "去伴奏")
 DERERVERB_MODEL = os.environ.get("CHORUS_DEREVERB_MODEL", "去混响（anvuew 22.505）")
 
 # 推理默认值（调用方没传 / 传了非法值时用这些）

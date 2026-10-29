@@ -370,7 +370,17 @@ def _prepare_window(source, work, target, duration, start_hint=None):
         candidate = crop(source, os.path.join(chorus_dir, "candidate.wav"), cut_start, cut_end)
     span = max(0.5, float(cut_end) - float(cut_start))
 
-    vocals, instrumental = rvc.separate(candidate, sep_vocal, sep_inst, config.SEP_MODEL)
+    try:
+        vocals, instrumental = rvc.separate(candidate, sep_vocal, sep_inst, config.SEP_MODEL)
+    except Exception as error:
+        # 提主旋律吃显存更多，显存紧张时退回普通分离，别让整首歌直接失败
+        if config.SEP_MODEL == config.SEP_FALLBACK_MODEL:
+            raise
+        print("[chorus-mw] %s 失败（%s），退回 %s" % (
+            config.SEP_MODEL, str(error).splitlines()[0][:120], config.SEP_FALLBACK_MODEL), flush=True)
+        vocals, instrumental = rvc.separate(
+            candidate, sep_vocal, sep_inst, config.SEP_FALLBACK_MODEL
+        )
     if not instrumental:
         raise RuntimeError("分离没有产出伴奏，无法混音")
     # 0.9.6：两段式——人声里再拆一次主唱，去掉和声（对副歌叠唱最有效）

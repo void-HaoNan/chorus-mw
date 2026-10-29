@@ -126,6 +126,7 @@ def ensure_rvc():
         creation = subprocess.CREATE_NEW_PROCESS_GROUP | 0x00000008
     child_env = dict(os.environ)
     child_env["weight_root"] = config.WEIGHTS_DIR
+    child_env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
     subprocess.Popen(
         [config.RVC_PYTHON, "webui.py", "--port", str(config.RVC_PORT), "--noautoopen"],
         cwd=config.RVC_APP,
@@ -169,9 +170,12 @@ class _ResidentWorker:
         os.makedirs(config.WORK_DIR, exist_ok=True)
         log = open(os.path.join(config.WORK_DIR, "resident.log"), "a", encoding="utf-8", errors="replace")
         try:
+            child_env = dict(os.environ)
+            child_env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
             self._proc = subprocess.Popen(
                 [config.RVC_PYTHON, "-X", "utf8", os.path.join(config.HOME, "resident_worker.py")],
                 cwd=config.HOME,
+                env=child_env,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=log,
@@ -315,7 +319,10 @@ def _worker(task, input_path, vocal_dir, inst_dir, timeout=1800):
         "--inst", inst_dir,
         "--fmt", "wav",
     ]
-    proc = subprocess.run(cmd, capture_output=True, timeout=timeout, creationflags=_NO_WINDOW)
+    child_env = dict(os.environ)
+    child_env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+    proc = subprocess.run(cmd, capture_output=True, timeout=timeout, creationflags=_NO_WINDOW,
+                          env=child_env)
     out = proc.stdout.decode("utf-8", "ignore")
     err = proc.stderr.decode("utf-8", "ignore")
     if proc.returncode != 0 or "WORKER_FAILED" in out:
