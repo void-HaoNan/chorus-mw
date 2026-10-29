@@ -5,7 +5,7 @@ RVC 翻唱中间层，给 AstrBot 的翻唱插件当后端用：
 
 当前版本：`0.9.3`（0.8.0 打通了推理与混音参数；0.8.1 加了显存保护；0.9.0 补上音色模型目录 `/model_info` 与 `CHORUS_WEIGHTS_DIR`；0.9.1 把推荐启动顺序写进文档）。
 
-默认后端插件是自维护分支 `astrbot_plugin_chorus_cover`（也可接上游 `astrbot_plugin_matsuko_cover`，
+默认后端插件是自维护分支 `astrbot_plugin_chorus_cover`（也可接上游 `astrbot_plugin_matsuko_cover`（仅兼容参考），
 接口签名一致）。
 
 整条链路（0.7.0 起）：**下歌 → 整首混音上挑候选副歌 → 只切这一段 → 只分离这一段 → 人声里精挑 → 去混响 ∥ 伴奏切段移调 → RVC 变声 → 混音 → 出 wav**
@@ -307,7 +307,7 @@ uvr5_*, msst_*, vocal_postprocess, shift_accompaniment`），末尾追加本机�
 
 ## 插件升级后怎么自查
 
-本项目的代码全在插件目录以外（插件更新只覆盖 `data\plugins\astrbot_plugin_matsuko_cover\`），
+本项目的代码全在插件目录以外（插件更新只覆盖 `data\plugins\astrbot_plugin_chorus_cover\`），
 所以升级不会冲掉这里。唯一会断的是**接口签名**：插件每次升级都可能给 `/convert` 加参数，
 多传一个我们不认识的参数，客户端会直接报 `Parameter xxx is not a valid key-word argument`。
 

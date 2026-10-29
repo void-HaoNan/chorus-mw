@@ -1,4 +1,4 @@
-"""AstrBot 翻唱插件（matsuko_cover）的 RVC 中间层，N 卡版。
+"""AstrBot 翻唱插件（astrbot_plugin_chorus_cover，兼容上游 matsuko_cover）的 RVC 中间层，N 卡版。
 
 对外接口和 RVCSVC-API-MSST 保持一致（/convert、/show_model、/cache_info 等），
 插件那边只要把 rvc_base_url 指向本服务，一行代码都不用改。

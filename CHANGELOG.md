@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## 0.9.10 — 2026-10-29
+
+**清理旧版本残留。**
+
+- `app.py` 顶部还写着「AstrBot 翻唱插件（matsuko_cover）」，改成现在的插件名，
+  上游名字只作为兼容说明保留；
+- README 里「插件更新只覆盖 `data\plugins\astrbot_plugin_matsuko_cover`」是旧目录名，
+  改成 `astrbot_plugin_chorus_cover`；
+- 版本号 0.9.9 → 0.9.10。
+
+
 ## 0.9.9 — 2026-10-29
 
 **混音默认加人声链（用户 A/B 通过后转正）。**
