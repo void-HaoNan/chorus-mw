@@ -342,6 +342,20 @@ def _prepare_window(source, work, target, duration, start_hint=None):
     vocals, instrumental = rvc.separate(candidate, sep_vocal, sep_inst, config.SEP_MODEL)
     if not instrumental:
         raise RuntimeError("分离没有产出伴奏，无法混音")
+    # 0.9.6：两段式——人声里再拆一次主唱，去掉和声（对副歌叠唱最有效）
+    if config.TWO_STAGE:
+        try:
+            lead, _backing = rvc.separate(
+                vocals,
+                os.path.join(work, "sep_vocal_lead"),
+                os.path.join(work, "sep_backing"),
+                "提主旋律",
+            )
+            if lead:
+                print("[chorus-mw] two_stage lead extracted", flush=True)
+                vocals = lead
+        except Exception as error:
+            print("[chorus-mw] two_stage failed (%s)，退回单段结果" % error, flush=True)
 
     if forced is not None:
         local_start, local_end = 0.0, min(span, float(target))

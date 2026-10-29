@@ -116,6 +116,14 @@ gradio_client 2.x 读到 `protocol: ws` 会直接抛 `Unknown protocol: ws`；0.
 $env:CHORUS_SEP_MODEL = '去伴奏'        # BS-Roformer，通用分离
 $env:CHORUS_SEP_MODEL = '去伴奏（becruily deux）'  # 更快，质量差一些
 `
+## 两段式分离（实验，默认关）
+
+默认是单段：直接对混音跑「提主旋律」。也可以先通用分离再从人声里拆主唱：
+
+```powershell
+$env:CHORUS_TWO_STAGE = '1'   # 打开两段式，实测与单段无可闻差别，只是更慢
+```
+
 ## 按音域自动移调（0.9.3，默认关闭）
 
 调用方没传升降调（key_shift=0）时，先测源人声的中位基频，再挪到 CHORUS_TARGET_F0（默认 240Hz）
