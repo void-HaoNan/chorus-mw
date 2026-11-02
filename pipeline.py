@@ -19,12 +19,50 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
 import config
 import chorus
 import rvc
+
+
+class PriorityLock:
+    """同一时刻只允许一个翻唱任务跑。
+
+    外部调用方可以给自己的请求打「优先」标记（默认 `_work/priority.flag`，
+    可用环境变量 `CHORUS_PRIORITY_FLAG` 换路径）：带标记的请求排队时插到前面，
+    交互式调用不会被后台批量任务堵住。没有标记就按先来后到。
+    """
+
+    def __init__(self) -> None:
+        self._cond = threading.Condition()
+        self._busy = False
+        self._priority_waiting = 0
+
+    def acquire(self, priority: bool) -> None:
+        with self._cond:
+            if priority:
+                self._priority_waiting += 1
+            try:
+                while self._busy or (not priority and self._priority_waiting > 0):
+                    self._cond.wait(timeout=1.0)
+                self._busy = True
+            finally:
+                if priority:
+                    self._priority_waiting -= 1
+
+    def release(self) -> None:
+        with self._cond:
+            self._busy = False
+            self._cond.notify_all()
+
+
+_CONVERT_LOCK = PriorityLock()
+# 外部可配置的优先标记：不设环境变量时用中间层自己的 _work/priority.flag
+PRIORITY_FLAG = os.environ.get("CHORUS_PRIORITY_FLAG") or os.path.join(
+    config.HOME, "_work", "priority.flag")
 
 
 _NO_WINDOW = 0x08000000 if os.name == "nt" else 0
@@ -559,7 +597,7 @@ def _prepare_full(source, work, target):
 
 # ---------------- 主流程 ----------------
 
-def run(song_name_src, key_shift=0, model_dropdown="", chorus_seconds=None,
+def _run_impl(song_name_src, key_shift=0, model_dropdown="", chorus_seconds=None,
         dereverb_model=None, inst_volume_db=None, shift_instrumental=None,
         progress=None, use_cache=True, render_mode=DEFAULT_RENDER_MODE,
         f0_method=None, index_rate=None, rms_mix_rate=None, protect=None,
@@ -786,3 +824,19 @@ def _default_model():
     if not models:
         raise RuntimeError("assets/weights 里没有 .pth 模型")
     return models[0]
+
+def run(*args, **kwargs):
+    """翻唱总入口：同一时刻只跑一个任务。
+
+    2026-11-03：`/convert` 和 `/convert_vocal_only` 是同一个后端，两个端点能并发进入 RVC，
+    会抢显卡。这里加一把全局锁串行化；调用方如果写了优先标记（PRIORITY_FLAG），
+    该请求在排队时插到前面，适合交互式调用。
+    """
+    priority = bool(PRIORITY_FLAG) and os.path.isfile(PRIORITY_FLAG)
+    if priority:
+        print("[chorus-mw] 优先请求，插队执行", flush=True)
+    _CONVERT_LOCK.acquire(priority)
+    try:
+        return _run_impl(*args, **kwargs)
+    finally:
+        _CONVERT_LOCK.release()
