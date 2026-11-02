@@ -37,6 +37,14 @@ function Say([string]$text, [string]$color = 'Gray') {
     Add-Content -Path $SupervisorLog -Value "[$stamp] $text" -Encoding UTF8
 }
 
+# 单实例：两个守护循环会各起一个 app.py，抢 3333 端口，日志里互相刷「已在监听」
+$mutex = New-Object System.Threading.Mutex($false, 'chorus_mw_supervisor')
+if (-not $mutex.WaitOne(0)) {
+    Say '已经有一个中间层守护循环在跑，本窗口不重复启动' 'Yellow'
+    Start-Sleep -Seconds 5
+    exit 0
+}
+
 $crashes = 0
 while ($true) {
     if (Test-Port $Port) {
