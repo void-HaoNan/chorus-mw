@@ -53,10 +53,11 @@ while ($true) {
         -RedirectStandardOutput $out -RedirectStandardError $err -PassThru
     # app 的日志落在 _work\mw.log；这里起一个跟随进程把它转印到本标签，
     # 这样标签里能看到实时转换日志，文件里也留着备查。
-    $tailName = "chorus-tail-$($proc.Id)"
+    # 标题用 cmd 的 title 设，别让 $Host 被外层展开成对象（之前那串红字就是这么来的）；
+    # Get-Content 必须显式 -Encoding UTF8，否则按 GBK 读 UTF-8 日志，中文全是乱码
     Start-Process -FilePath 'powershell' -ArgumentList @(
         '-NoProfile', '-Command',
-        "$host.UI.RawUI.WindowTitle = '翻唱中间层3333'; Get-Content -LiteralPath '$out' -Wait -Tail 0"
+        "& { `$Host.UI.RawUI.WindowTitle = '翻唱中间层3333'; Get-Content -LiteralPath '$out' -Wait -Tail 0 -Encoding UTF8 }"
     ) -NoNewWindow | Out-Null
 
     # 等它把端口监听起来（最多 60 秒）
