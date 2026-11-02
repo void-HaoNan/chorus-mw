@@ -563,7 +563,7 @@ def run(song_name_src, key_shift=0, model_dropdown="", chorus_seconds=None,
         dereverb_model=None, inst_volume_db=None, shift_instrumental=None,
         progress=None, use_cache=True, render_mode=DEFAULT_RENDER_MODE,
         f0_method=None, index_rate=None, rms_mix_rate=None, protect=None,
-        vocal_volume_db=None, chorus_start=None):
+        vocal_volume_db=None, chorus_start=None, vocal_only=False):
     """返回 (输出音频路径, 是否命中缓存, 说明文本)。
 
     render_mode:
@@ -573,6 +573,9 @@ def run(song_name_src, key_shift=0, model_dropdown="", chorus_seconds=None,
 
     0.8.0：f0_method / index_rate / rms_mix_rate / protect / inst_volume_db /
     vocal_volume_db 都会真的传给 RVC 和混音；传 None 表示用 config 里的默认值。
+
+    vocal_only：只出变声后的人声，不混伴奏。伴奏既不做变速移调也不参与混音，
+    适合「清唱/清声」场景，耗时也更短（少一路伴奏预处理）。
     """
     def report(pct, text):
         if progress is not None:
@@ -611,6 +614,7 @@ def run(song_name_src, key_shift=0, model_dropdown="", chorus_seconds=None,
         "inst_volume_db": round(inst_db, 2),
         "vocal_volume_db": round(vocal_db, 2),
         # 0.9.3：自动移调会改变实际移调量，必须进缓存键，否则会拿到旧的 0 调产物
+        "vocal_only": bool(vocal_only),
         "auto_pitch": bool(config.AUTO_PITCH),
         "target_f0": round(config.TARGET_F0, 1),
         # 指定起点也是产物的一部分
@@ -694,9 +698,12 @@ def run(song_name_src, key_shift=0, model_dropdown="", chorus_seconds=None,
             print("[chorus-mw] auto_pitch failed: %s" % error, flush=True)
 
     # 并行：伴奏切段+移调（CPU / rubberband）与去混响（GPU）同时开跑
+    # vocal_only 不混伴奏，这路预处理直接跳过，省一段 CPU 和内存
     executor = ThreadPoolExecutor(max_workers=1)
     try:
-        inst_future = executor.submit(_prepare_instrumental, inst_cut, work, shift_instrumental)
+        inst_future = None
+        if not vocal_only:
+            inst_future = executor.submit(_prepare_instrumental, inst_cut, work, shift_instrumental)
         report(58, "去混响（%s）" % dereverb_label)
         clean_vocal = rvc.dereverb(
             vocal_cut,
@@ -716,18 +723,30 @@ def run(song_name_src, key_shift=0, model_dropdown="", chorus_seconds=None,
             prot,
         )
         mark("convert")
-        shifted_inst = inst_future.result()
-        mark("inst_prep")
+        shifted_inst = inst_future.result() if inst_future is not None else None
+        if inst_future is not None:
+            mark("inst_prep")
     finally:
         executor.shutdown(wait=True)
 
-    report(88, "变声完成，混音中")
     final = os.path.join(
         config.OUT_DIR,
         "%s_%s_%s.wav" % (_safe(os.path.splitext(os.path.basename(source))[0], 40),
                           _safe(os.path.splitext(model)[0], 20), token[-6:]),
     )
-    mix(converted, shifted_inst, final, inst_db, 0.0, vocal_db)
+    if vocal_only:
+        report(88, "变声完成，只留人声（不混伴奏）")
+        shutil.copyfile(converted, final)
+    else:
+        report(88, "变声完成，混音中")
+        mix(converted, shifted_inst, final, inst_db, 0.0, vocal_db)
+    # 把真实切点写给下游，歌词按这个起点对齐，不再靠猜
+    try:
+        with open(final + ".lyric.json", "w", encoding="utf-8") as fh:
+            json.dump({"start": round(float(window["start"]), 2),
+                       "end": round(float(window["end"]), 2)}, fh)
+    except OSError:
+        pass
 
     total = round(time.time() - started, 1)
     meta = {
@@ -745,6 +764,7 @@ def run(song_name_src, key_shift=0, model_dropdown="", chorus_seconds=None,
         "protect": round(prot, 4),
         "inst_volume_db": round(inst_db, 2),
         "vocal_volume_db": round(vocal_db, 2),
+        "vocal_only": bool(vocal_only),
     }
     cache_store(key, final, meta)
     print("[chorus-mw] done mode=%s target=%.1fs seped=%.1fs window=%.1fs-%.1fs "

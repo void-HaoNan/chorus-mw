@@ -12,7 +12,7 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
-try { $Host.UI.RawUI.WindowTitle = 'RVC 中间层（守护）' } catch {}
+try { $Host.UI.RawUI.WindowTitle = '翻唱中间层3333' } catch {}
 
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Python = 'C:\Users\21903\AppData\Local\Programs\Python\Python312\python.exe'
@@ -51,6 +51,13 @@ while ($true) {
     $proc = Start-Process -FilePath $Python -ArgumentList @('-X', 'utf8', 'app.py') `
         -WorkingDirectory $Here -WindowStyle Hidden `
         -RedirectStandardOutput $out -RedirectStandardError $err -PassThru
+    # app 的日志落在 _work\mw.log；这里起一个跟随进程把它转印到本标签，
+    # 这样标签里能看到实时转换日志，文件里也留着备查。
+    $tailName = "chorus-tail-$($proc.Id)"
+    Start-Process -FilePath 'powershell' -ArgumentList @(
+        '-NoProfile', '-Command',
+        "$host.UI.RawUI.WindowTitle = '翻唱中间层3333'; Get-Content -LiteralPath '$out' -Wait -Tail 0"
+    ) -NoNewWindow | Out-Null
 
     # 等它把端口监听起来（最多 60 秒）
     $ready = $false

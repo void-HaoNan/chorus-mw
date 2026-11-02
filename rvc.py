@@ -123,7 +123,8 @@ def ensure_rvc():
         return config.RVC_PORT
     creation = 0
     if os.name == "nt":
-        creation = subprocess.CREATE_NEW_PROCESS_GROUP | 0x00000008
+        # 只开新进程组 + 不显示控制台窗口；原来的 0x8 是 DETACHED，仍会闪一个窗
+        creation = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
     child_env = dict(os.environ)
     child_env["weight_root"] = config.WEIGHTS_DIR
     child_env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")

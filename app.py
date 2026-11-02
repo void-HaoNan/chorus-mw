@@ -7,7 +7,12 @@
 「整首分离 → 按人声能量挑 45 秒副歌 → 软切 → 去混响 → RVC → 混音」。
 """
 import os
+
+# 只接管 stdout：uvicorn 的日志配置要拿真的 stderr，包起来会起不来
+
+
 import sys
+import time
 import traceback
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -200,6 +205,7 @@ def convert(
     rms_mix_rate=None,
     protect=None,
     vocal_volume_db=None,
+    vocal_only=False,
     progress=None,
 ):
     """兼容原中间层签名的入口。
@@ -226,6 +232,10 @@ def convert(
         )
         _log_effective_params(params, inst_gain, vocal_gain)
         mode = pipeline.normalize_mode(render_mode)
+        _t0 = time.time()
+        print("[chorus-mw] convert 开始 model=%s mode=%s 输入=%s vocal_only=%s"
+              % (model_dropdown, mode, os.path.basename(str(song_name_src)), bool(vocal_only)),
+              flush=True)
         audio, cache_hit, _note = pipeline.run(
             song_name_src,
             key_shift=shift,
@@ -242,11 +252,64 @@ def convert(
             index_rate=params["index_rate"],
             rms_mix_rate=params["rms_mix_rate"],
             protect=params["protect"],
+            vocal_only=bool(vocal_only),
         )
+        print("[chorus-mw] convert 完成 model=%s 用时=%.1fs 缓存=%s 输出=%s"
+              % (model_dropdown, time.time() - _t0, "命中" if cache_hit else "无",
+                 os.path.basename(str(audio))), flush=True)
         return audio, "true" if cache_hit else "false"
     except Exception as error:
         traceback.print_exc()
         raise gr.Error("翻唱失败：%s" % error)
+
+
+def convert_vocal_only(
+    song_name_src,
+    key_shift,
+    vocal_vol,
+    inst_vol,
+    model_dropdown,
+    reverb_intensity=4,
+    delay_intensity=0,
+    f0_method="rmvpe",
+    index_rate=0.75,
+    filter_radius=3,
+    uvr5_agg=10,
+    uvr5_tta=False,
+    uvr5_postprocess=False,
+    uvr5_window_size=512,
+    uvr5_high_end_process="mirroring",
+    msst_batch_size=1,
+    msst_num_overlap=4,
+    msst_normalize=False,
+    msst_use_tta=False,
+    msst_model=None,
+    vocal_postprocess=False,
+    shift_accompaniment=True,
+    chorus_seconds=None,
+    chorus_start=None,
+    dereverb_model=None,
+    inst_volume_db=-6.0,
+    render_mode="chorus",
+    rms_mix_rate=None,
+    protect=None,
+    vocal_volume_db=None,
+    progress=None,
+):
+    """清唱入口：跟 /convert 一样的参数，但只出人声、不混伴奏。
+
+    单独开一个 api，是因为 gradio 的 /info 参数表里末尾新加的布尔位会被
+    progress 占位吞掉，插件探测不到；单开一个端点参数表是干净的。
+    """
+    return convert(
+        song_name_src, key_shift, vocal_vol, inst_vol, model_dropdown,
+        reverb_intensity, delay_intensity, f0_method, index_rate, filter_radius,
+        uvr5_agg, uvr5_tta, uvr5_postprocess, uvr5_window_size, uvr5_high_end_process,
+        msst_batch_size, msst_num_overlap, msst_normalize, msst_use_tta, msst_model,
+        vocal_postprocess, shift_accompaniment, chorus_seconds, chorus_start,
+        dereverb_model, inst_volume_db, render_mode, rms_mix_rate, protect,
+        vocal_volume_db, True, progress,
+    )
 
 
 def show_model():
@@ -374,6 +437,8 @@ def _hidden_inputs():
                   value=config.DEFAULT_PROTECT, visible=False),
         gr.Number(label="vocal_volume_db", value=config.DEFAULT_VOCAL_VOLUME_DB,
                   visible=False),
+        # 清唱开关：只出变声后的人声，不混伴奏（插件侧按名字传，没这个参数就不传）
+        gr.Checkbox(label="vocal_only", value=False, visible=False),
     ]
 
 
@@ -392,6 +457,11 @@ def build():
         inputs = _hidden_inputs()
         gr.Button("API Convert", visible=False).click(
             convert, inputs=inputs, outputs=[api_out, api_flag], api_name="convert"
+        )
+        # 清唱入口：参数表跟 /convert 完全一致，内部强制 vocal_only
+        gr.Button("API Convert Vocal Only", visible=False).click(
+            convert_vocal_only, inputs=inputs[:-1], outputs=[api_out, api_flag],
+            api_name="convert_vocal_only"
         )
         gr.Button("API Show Model", visible=False).click(
             show_model, inputs=[], outputs=[show_json], api_name="show_model"
