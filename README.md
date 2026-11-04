@@ -377,5 +377,5 @@ python tools\check_plugin_compat.py
 
 - 双击 `start_supervisor.bat`，或 `powershell -File start_supervisor.ps1`；
 - 进程退出会自动重启，重启记录在 `_work/supervisor.log`；
-- 常驻 worker 每 4 首自动换新进程，分离前检查可用内存（阈值 2500MB）。
+- 常驻 worker 每 4 首自动换新进程，分离前检查可用内存（默认阈值 500MB，CHORUS_MIN_FREE_RAM_MB 可调）。
 

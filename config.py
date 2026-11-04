@@ -106,7 +106,7 @@ VOCAL_CHAIN_DUCK = os.environ.get("CHORUS_VOCAL_DUCK", "1") == "1"
 # 攒多了就会 LLVM ERROR: out of memory 然后 c10.dll 崩溃。
 RESIDENT_RECYCLE_TASKS = int(os.environ.get("CHORUS_RESIDENT_RECYCLE", "4"))
 # 分离前的最低可用内存（MB），不够就先等一等，别硬跑到 OOM 崩进程
-MIN_FREE_RAM_MB = int(os.environ.get("CHORUS_MIN_FREE_RAM_MB", "1000"))
+MIN_FREE_RAM_MB = int(os.environ.get("CHORUS_MIN_FREE_RAM_MB", "500"))
 DERERVERB_MODEL = os.environ.get("CHORUS_DEREVERB_MODEL", "去混响（anvuew 22.505）")
 
 # 推理默认值（调用方没传 / 传了非法值时用这些）
