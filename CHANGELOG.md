@@ -1,4 +1,4 @@
-# CHANGELOG
+﻿# CHANGELOG
 
 ## 0.9.14 — 2026-11-03
 
@@ -33,7 +33,7 @@
 
 **清唱端点、请求日志、守护启动器把日志转印到自己的窗口。**
 
-- 新增 `/convert_vocal_only`：参数表与 `/convert` 一致，内部强制 `vocal_only=True`，照常分离、
+- 新增 `/convert_vocal_only`：参数与 `/convert` 一一对应（少一个 `vocal_only` 组件），内部强制 `vocal_only=True`，照常分离、
   去混响、变声，最后跳过混音只出人声。单独开一个 api 的原因：Gradio 的 `/info` 参数名来自函数签名、
   按组件数截断，`/convert` 末尾新加的布尔位会被 `progress` 占位吞掉，客户端探测不到；
 - `pipeline.run()` 支持 `vocal_only`：伴奏不做变速移调、不参与混音，少一段 CPU 和内存；

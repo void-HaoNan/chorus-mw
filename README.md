@@ -112,7 +112,7 @@ gradio_client 2.x 读到 `protocol: ws` 会直接抛 `Unknown protocol: ws`；0.
 
 ## 清唱端点（0.9.13）
 
-`/convert_vocal_only` 和 `/convert` 参数表一致，内部强制 `vocal_only=True`：照常分离、去混响、变声，
+`/convert_vocal_only` 和 `/convert` 参数一一对应（只少了末尾的 `vocal_only` 组件），内部强制 `vocal_only=True`：照常分离、去混响、变声，
 **最后跳过混音**，直接把变声后的人声复制成成品。
 
 - 单独开一个 api，是因为 Gradio 的 `/info` 参数名来自函数签名、按组件数截断，末尾新加的布尔位会被吞掉——
@@ -233,8 +233,8 @@ $env:CHORUS_MAX_AUTO_SHIFT = '12'  # 最多挪几个半音
 
 | api_name | 说明 |
 | --- | --- |
-| `/convert` | 主入口，31 个业务参数（另有 `progress` 回调），按名字传 kwargs，返回 `(音频文件, "true"/"false" 是否命中缓存)` |
-| `/convert_vocal_only` | **0.9.13 新增**：清唱，参数表与 `/convert` 一致，内部强制 `vocal_only=True`，只出人声 |
+| `/convert` | 主入口，形参 31 个（另有 `progress` 回调）；`/info` 里能列到 30 个（`vocal_only` 被组件数截断）。按名字传 kwargs，返回 `(音频文件, "true"/"false" 是否命中缓存)` |
+| `/convert_vocal_only` | **0.9.13 新增**：清唱，参数与 `/convert` 一一对应（少一个 `vocal_only` 组件），内部强制 `vocal_only=True`，只出人声 |
 | `/show_model` | 列出音色模型目录里的 `.pth`（返回 list） |
 | `/model_info` | 音色模型目录自检，返回目录、数量、模型清单与告警（见下） |
 | `/show_msst_models` / `/select_msst_model` | 分离模型列表与切换（分离模型实际由 `CHORUS_SEP_MODEL` 启动配置决定） |
