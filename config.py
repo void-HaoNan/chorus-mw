@@ -1,4 +1,4 @@
-"""路径和默认参数。所有值都可以用同名环境变量覆盖，方便换机器。
+﻿"""路径和默认参数。所有值都可以用同名环境变量覆盖，方便换机器。
 
 RVC 整合包的路径**不写死在代码里**，必须用环境变量给：
 
@@ -11,7 +11,7 @@ import os
 HOME = os.path.dirname(os.path.abspath(__file__))
 
 # 服务版本（和 CHANGELOG / README 对齐），启动日志与 /cache_info 都会带出来
-VERSION = "0.9.14"
+VERSION = "0.9.15"
 
 
 class ConfigError(RuntimeError):
@@ -128,18 +128,36 @@ DEFAULT_VOCAL_VOLUME_DB = float(os.environ.get("CHORUS_VOCAL_VOLUME_DB", "0.0"))
 # 网易云兜底下载（插件传歌名而不是文件路径时用）
 NETEASE_SEARCH = "http://music.163.com/api/search/get/web"
 NETEASE_PARSE = "https://www.hhlqilongzhu.cn/api/dg_wyymusic.php"
-# 本地网易云 API（D:\PYMSS-RVC\netease-api，默认 3003）：能取会员歌直链，
-# cookie 从 AstrBot 翻唱插件的配置里读，读不到就空着。
+# 本地网易云 API（NeteaseCloudMusicApi，默认 127.0.0.1:3003）：能取会员歌直链，
+# cookie 从 AstrBot 翻唱插件的配置里读（CHORUS_PLUGIN_CONFIG / ASTRBOT_DATA_DIR 可改位置），
+# 读不到就空着。
 NETEASE_API_BASE = os.environ.get("CHORUS_NETEASE_API", "http://127.0.0.1:3003").rstrip("/")
+
+
+def _plugin_config_path() -> str:
+    """翻唱插件配置文件的位置，三个来源按优先级排：
+
+    1. ``CHORUS_PLUGIN_CONFIG``：直接给完整文件路径；
+    2. ``ASTRBOT_DATA_DIR``：AstrBot 数据目录，拼 ``config\\astrbot_plugin_chorus_cover_config.json``；
+    3. 默认 ``%USERPROFILE%\\data\\config\\...``（AstrBot 的默认数据目录）。
+
+    不写死盘符和用户名：换机器、换安装位置都能用，缺文件时静默回空 cookie。
+    """
+    explicit = (os.environ.get("CHORUS_PLUGIN_CONFIG") or "").strip()
+    if explicit:
+        return explicit
+    data_dir = (os.environ.get("ASTRBOT_DATA_DIR") or "").strip()
+    if not data_dir:
+        data_dir = os.path.join(os.path.expanduser("~"), "data")
+    return os.path.join(data_dir, "config", "astrbot_plugin_chorus_cover_config.json")
 
 
 def _plugin_netease_cookie():
     if os.environ.get("CHORUS_NETEASE_COOKIE"):
         return os.environ["CHORUS_NETEASE_COOKIE"]
-    path = r"C:\Users\21903\data\config\astrbot_plugin_chorus_cover_config.json"
     try:
         import json as _json
-        with open(path, "r", encoding="utf-8-sig") as handle:
+        with open(_plugin_config_path(), "r", encoding="utf-8-sig") as handle:
             return str(_json.load(handle).get("netease_cookie") or "")
     except Exception:
         return ""

@@ -3,10 +3,11 @@
 RVC 翻唱中间层，给 AstrBot 的翻唱插件当后端用：
 丢一首歌进去，出来一段翻唱成品（默认 45 秒副歌，也可以自定长度、指定起点或整首翻唱）。
 
-当前版本：`0.9.14`。配套插件 `astrbot_plugin_chorus_cover` ≥ `0.19.13`（清唱端点）／`0.19.15`（串行化说明）。
+当前版本：`0.9.15`。配套插件 `astrbot_plugin_chorus_cover` `0.19.16`（更老的插件版本也能用，只是没有清唱开关）。
 
 | 版本 | 这一版加了什么 |
 | --- | --- |
+| `0.9.15` | 起停与自查脚本不再写死本机路径：一律读环境变量（`CHORUS_RVC_ROOT` / `CHORUS_PYTHON` / `CHORUS_PLUGIN_CONFIG` / `CHORUS_PLUGIN_MAIN`），守护脚本也支持同名参数 |
 | `0.9.14` | 翻唱任务全局串行化：`/convert` 和 `/convert_vocal_only` 共用一把锁，后到的排队；可选「优先标记」插队 |
 | `0.9.13` | 清唱端点 `/convert_vocal_only`；每次请求打参数与开始/完成日志；守护启动器把中间层日志转印到自己的窗口 |
 | `0.9.12` | 取歌改走本地网易云 API（3003），搜索结果按原唱优先打分 |
@@ -314,8 +315,9 @@ powershell -ExecutionPolicy Bypass -File scripts\start.ps1 -Stop     :: 停掉
 - 同时只允许一个守护循环（命名互斥量），第二个窗口会提示后退出，不会两个循环各起一个 app 抢 3333；
 - 窗口里实时显示中间层日志（把 `_work/mw.log` 转印过来，UTF-8 读取，标题「翻唱中间层3333」）。
 
-> 注意：`start_supervisor.ps1` 顶部的 `$Python` 和 `$RvcRoot` 是本机路径，换机器要改这两行；
-> `scripts\start.ps1` 则直接读 `CHORUS_PYTHON` / `CHORUS_RVC_ROOT`，不需要改文件。
+> `start_supervisor.ps1` 和 `scripts\start.ps1` 一样只读环境变量，仓库里不写死任何本机路径：
+> 启动前设好 `CHORUS_RVC_ROOT`（必填）和 `CHORUS_PYTHON`（可选），或者直接传参数
+> `-RvcRoot 'D:\...' -Python 'C:\...\python.exe'`；缺了会打印该设哪个变量然后退出。
 
 启动前会跑 `config.check_paths()`，缺 runtime / ffmpeg / 模型目录 / rubberband+dl / libs_web 会一次列全并退出，
 不会带着半个环境跑到一半再炸。
@@ -324,8 +326,11 @@ powershell -ExecutionPolicy Bypass -File scripts\start.ps1 -Stop     :: 停掉
 
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
-| `CHORUS_RVC_ROOT` | 无，**必填** | RVC 整合包根目录 |
-| `CHORUS_PYTHON` | PATH 里的 python | 跑服务端的解释器（`scripts\start.ps1` 用） |
+| `CHORUS_RVC_ROOT` | 无，**必填** | RVC 整合包根目录（`start.ps1` 和守护脚本都读它） |
+| `CHORUS_PYTHON` | PATH 里的 python | 跑服务端的解释器（`scripts\start.ps1` 与 `start_supervisor.ps1` 用） |
+| `CHORUS_PLUGIN_CONFIG` | `%USERPROFILE%\data\config\astrbot_plugin_chorus_cover_config.json` | 翻唱插件配置文件路径，用来读 `netease_cookie`；换过 AstrBot 数据目录时指过来（0.9.15） |
+| `CHORUS_PLUGIN_MAIN` | `%USERPROFILE%\data\plugins\astrbot_plugin_chorus_cover\main.py` | `tools\check_plugin_compat.py` 默认比对的插件源码位置（0.9.15） |
+| `ASTRBOT_DATA_DIR` | `%USERPROFILE%\data` | AstrBot 数据目录；上面两项没设时按它拼默认路径 |
 | `CHORUS_WEIGHTS_DIR` | `<RVC_RVC_ROOT>\assets\weights` | 音色模型目录（0.9.0）。改这里要重启中间层；启动时会把它作为 `weight_root` 传给 RVC 子进程 |
 | `CHORUS_PORT` | 3333 | 监听端口 |
 | `CHORUS_HOST` | 127.0.0.1 | 监听地址 |
@@ -409,7 +414,8 @@ Windows 下的现成实现是用户侧的一键启动脚本（例如 `D:\QQBOT\�
 python tools\check_plugin_compat.py --plugin-main "C:\你的\data\plugins\astrbot_plugin_chorus_cover\main.py"
 ```
 
-（不带 `--plugin-main` 时它会读脚本里写死的旧路径，基本一定找不到，建议每次传。）
+（不带 `--plugin-main` 时，它先看 `CHORUS_PLUGIN_MAIN`，再按 `ASTRBOT_DATA_DIR` /
+`%USERPROFILE%\data` 推默认位置；推不对就用参数指定。）
 
 输出里出现 `✘` 就照着补：`app.py` 的 `convert()` 加形参，`_hidden_inputs()` 加一个同名
 `label` 的隐藏组件，重启中间层即可。

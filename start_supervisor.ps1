@@ -5,21 +5,58 @@
   每崩一次往 supervisor.log 记一行，关掉本窗口即停止。
 
   独立运行，不并入 QQ 机器人的一键启动脚本。
+
+  用法（全部走环境变量，不写死本机路径）：
+    $env:CHORUS_RVC_ROOT = 'D:\你的路径\RVC20260718Nvidia50x0'   # 必填
+    $env:CHORUS_PYTHON   = 'C:\...\python.exe'                  # 可选，默认找 PATH 里的 python
+    powershell -ExecutionPolicy Bypass -File start_supervisor.ps1
+
+  也可以直接传参数覆盖：-RvcRoot 'D:\...' -Python 'C:\...\python.exe'
 #>
 [CmdletBinding()]
 param(
-    [int]$Port = 3333
+    [int]$Port = 3333,
+    [string]$RvcRoot = "",
+    [string]$Python = ""
 )
 
 $ErrorActionPreference = 'Continue'
 try { $Host.UI.RawUI.WindowTitle = '翻唱中间层3333' } catch {}
 
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
-$Python = 'C:\Users\21903\AppData\Local\Programs\Python\Python312\python.exe'
-$RvcRoot = 'D:\PYMSS-RVC\RVC20260723Nvidia50x0\RVC20260718Nvidia50x0'
 $LogDir = Join-Path $Here '_work'
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 $SupervisorLog = Join-Path $LogDir 'supervisor.log'
+
+function Say([string]$text, [string]$color = 'Gray') {
+    $stamp = Get-Date -Format 'HH:mm:ss'
+    Write-Host "[$stamp] $text" -ForegroundColor $color
+    Add-Content -Path $SupervisorLog -Value "[$stamp] $text" -Encoding UTF8
+}
+
+# ---- 解释器：参数 > CHORUS_PYTHON > PATH 里的 python ----
+if (-not $Python) { $Python = $env:CHORUS_PYTHON }
+if (-not $Python) {
+    $cmd = Get-Command python -ErrorAction SilentlyContinue
+    if ($cmd -and $cmd.Source -notmatch '\\WindowsApps\\') { $Python = $cmd.Source }
+}
+if (-not $Python -or -not (Test-Path $Python)) {
+    Say '找不到 Python：设 CHORUS_PYTHON 指过去，或把 python 加进 PATH 再启动。' 'Red'
+    Start-Sleep -Seconds 5
+    exit 2
+}
+
+# ---- RVC 整合包：参数 > CHORUS_RVC_ROOT ----
+if (-not $RvcRoot) { $RvcRoot = $env:CHORUS_RVC_ROOT }
+if (-not $RvcRoot -or -not (Test-Path (Join-Path $RvcRoot 'runtime\python.exe'))) {
+    Say 'CHORUS_RVC_ROOT 没设或指错了：它要指向 RVC 整合包根目录（里面要有 runtime\python.exe）。' 'Red'
+    Say "  当前值：[$RvcRoot]" 'DarkGray'
+    Say "  例：`$env:CHORUS_RVC_ROOT = 'D:\你的路径\RVC20260718Nvidia50x0'" 'Yellow'
+    Start-Sleep -Seconds 5
+    exit 2
+}
+Say ("python：{0}" -f $Python) 'DarkGray'
+Say ("RVC  ：{0}" -f $RvcRoot) 'DarkGray'
 
 $env:CHORUS_RVC_ROOT = $RvcRoot
 $env:NO_PROXY = '127.0.0.1,localhost,::1'
@@ -29,12 +66,6 @@ $env:PYTORCH_CUDA_ALLOC_CONF = 'expandable_segments:True'
 
 function Test-Port([int]$p) {
     return $null -ne (Get-NetTCPConnection -State Listen -LocalPort $p -ErrorAction SilentlyContinue | Select-Object -First 1)
-}
-
-function Say([string]$text, [string]$color = 'Gray') {
-    $stamp = Get-Date -Format 'HH:mm:ss'
-    Write-Host "[$stamp] $text" -ForegroundColor $color
-    Add-Content -Path $SupervisorLog -Value "[$stamp] $text" -Encoding UTF8
 }
 
 # 单实例：两个守护循环会各起一个 app.py，抢 3333 端口，日志里互相刷「已在监听」

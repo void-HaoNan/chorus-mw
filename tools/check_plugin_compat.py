@@ -13,12 +13,27 @@
 """
 import argparse
 import json
+import os
 import re
 import sys
 import urllib.request
 
 DEFAULT_URL = "http://127.0.0.1:3333/"
-DEFAULT_PLUGIN_MAIN = r"C:\Users\21903\data\plugins\astrbot_plugin_matsuko_cover\main.py"
+
+
+def default_plugin_main() -> str:
+    """插件 main.py 的位置：CHORUS_PLUGIN_MAIN > ASTRBOT_DATA_DIR > %USERPROFILE%\\data。
+
+    以前这里写死了某台机器的 ``C:\\Users\\...\\astrbot_plugin_matsuko_cover\\main.py``，
+    换机器必然找不到。现在只按环境变量和用户目录推，找不到就让人用 --plugin-main 指定。
+    """
+    explicit = (os.environ.get("CHORUS_PLUGIN_MAIN") or "").strip()
+    if explicit:
+        return explicit
+    data_dir = (os.environ.get("ASTRBOT_DATA_DIR") or "").strip()
+    if not data_dir:
+        data_dir = os.path.join(os.path.expanduser("~"), "data")
+    return os.path.join(data_dir, "plugins", "astrbot_plugin_chorus_cover", "main.py")
 
 
 def server_params(base_url, endpoint="/convert"):
@@ -54,14 +69,20 @@ def plugin_params(main_path):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", default=DEFAULT_URL)
-    parser.add_argument("--plugin-main", default=DEFAULT_PLUGIN_MAIN)
+    parser.add_argument(
+        "--plugin-main",
+        default="",
+        help="插件 main.py 路径；不给就用 CHORUS_PLUGIN_MAIN，再退到 AstrBot 数据目录下的默认位置",
+    )
     args = parser.parse_args()
 
     have = server_params(args.url)
+    plugin_main = args.plugin_main or default_plugin_main()
     try:
-        want = plugin_params(args.plugin_main)
+        want = plugin_params(plugin_main)
     except FileNotFoundError:
-        print("找不到插件 main.py：%s" % args.plugin_main)
+        print("找不到插件 main.py：%s" % plugin_main)
+        print("用 --plugin-main 指定，或设环境变量 CHORUS_PLUGIN_MAIN / ASTRBOT_DATA_DIR。")
         print("中间层声明的参数（%d 个）：%s" % (len(have), ", ".join(have)))
         return 0
 

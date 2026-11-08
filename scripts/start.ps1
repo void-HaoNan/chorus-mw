@@ -38,7 +38,7 @@ function Get-Owner([int]$Port) {
 function Get-Python {
     if ($env:CHORUS_PYTHON -and (Test-Path $env:CHORUS_PYTHON)) { return $env:CHORUS_PYTHON }
     $cmd = Get-Command python -ErrorAction SilentlyContinue
-    if ($cmd) { return $cmd.Source }
+    if ($cmd -and $cmd.Source -notmatch '\\WindowsApps\\') { return $cmd.Source }
     return $null
 }
 

@@ -1,4 +1,26 @@
-﻿# CHANGELOG
+# CHANGELOG
+
+## 0.9.15 — 2026-11-08
+
+**起停与自查脚本不再写死本机路径，一律读环境变量。**
+
+现场：`start_supervisor.ps1` 顶部直接写死了作者的 Python 和 RVC 整合包路径，
+`tools/check_plugin_compat.py` 默认指向某台机器上的 `astrbot_plugin_matsuko_cover`，
+`config.py` 读网易云 cookie 的路径也写死了 `C:\Users\<作者>\...`。别人克隆仓库、或者本机换了目录，
+这三处都会静默失败（cookie 读不到、守护脚本找不到解释器、比对工具报找不到文件）。
+
+- `start_supervisor.ps1`：解析顺序改成 `参数 > CHORUS_PYTHON > PATH` 和 `参数 > CHORUS_RVC_ROOT`；
+  新增 `-Python` / `-RvcRoot` 两个参数；缺了会打印该设哪个变量，然后 `exit 2`，不再带错路径硬跑；
+- `scripts/start.ps1`：同步加一条防护——PATH 里的 `python` 如果是应用商店占位符（路径含 `WindowsApps`）
+  就跳过。那种 exe 过得了 `Test-Path`，一跑就弹商店，属于「看起来找到了其实没用」；
+- `config.py`：新增 `_plugin_config_path()`，按 `CHORUS_PLUGIN_CONFIG` → `ASTRBOT_DATA_DIR\config\...`
+  → `%USERPROFILE%\data\config\astrbot_plugin_chorus_cover_config.json` 三级解析，不再出现用户名；
+- `tools/check_plugin_compat.py`：默认插件位置同样按 `CHORUS_PLUGIN_MAIN` → `ASTRBOT_DATA_DIR\plugins\...`
+  → `%USERPROFILE%\data\plugins\astrbot_plugin_chorus_cover\main.py`，找不到时提示用 `--plugin-main` 指定；
+- 实测：无 env 启动守护脚本 → 提示缺 `CHORUS_PYTHON`、`exit 2`；三级解析分别得到
+  `E:\custom\cover.json` / `E:\astrbot-data\config\...` / `C:\Users\<用户>\data\config\...`；
+  `check_plugin_compat.py` 不带参数自动找到插件源码，结论「兼容」；
+- 版本号 0.9.14 → 0.9.15。
 
 ## 0.9.14 — 2026-11-03
 
