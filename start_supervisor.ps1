@@ -1,10 +1,12 @@
 ﻿<#
-  chorus-mw 守护启动器
+  chorus-mw 守护启动器（0.9.11 起的老办法，0.9.16 起只在插件关闭自动托管时才用）
   --------------------
   用循环看住 app.py：进程退出（包括 torch/LLVM 内存崩）就自动重启，
   每崩一次往 supervisor.log 记一行，关掉本窗口即停止。
 
-  独立运行，不并入 QQ 机器人的一键启动脚本。
+  ⚠️ 插件 astrbot_plugin_chorus_cover 0.19.17 起会自己拉起/关闭中间层（auto_middleware 默认开）。
+     插件托管时**不要**再开这个守护：两边会互相拉起，关掉 AstrBot 也关不干净。
+     只有把插件设置 auto_middleware 关掉、或者你用别的客户端调中间层时，才用它。
 
   用法（全部走环境变量，不写死本机路径）：
     $env:CHORUS_RVC_ROOT = 'D:\你的路径\RVC20260718Nvidia50x0'   # 必填
@@ -32,6 +34,31 @@ function Say([string]$text, [string]$color = 'Gray') {
     $stamp = Get-Date -Format 'HH:mm:ss'
     Write-Host "[$stamp] $text" -ForegroundColor $color
     Add-Content -Path $SupervisorLog -Value "[$stamp] $text" -Encoding UTF8
+}
+
+# 插件在托管时不要跟它抢：插件写 middleware.json 记归属，astrbot_pid 还活着就说明它在管
+$markerCandidates = @()
+if ($env:CHORUS_MARKER_FILE) { $markerCandidates += $env:CHORUS_MARKER_FILE }
+if ($env:ASTRBOT_DATA_DIR) {
+    $markerCandidates += (Join-Path $env:ASTRBOT_DATA_DIR 'plugin_data\astrbot_plugin_chorus_cover\middleware.json')
+}
+if ($env:USERPROFILE) {
+    $markerCandidates += (Join-Path $env:USERPROFILE 'data\plugin_data\astrbot_plugin_chorus_cover\middleware.json')
+}
+foreach ($marker in ($markerCandidates | Select-Object -Unique)) {
+    if (-not (Test-Path $marker)) { continue }
+    try {
+        $data = Get-Content -LiteralPath $marker -Raw -Encoding UTF8 | ConvertFrom-Json
+        $owner = [int]$data.astrbot_pid
+        if ($owner -gt 0 -and (Get-Process -Id $owner -ErrorAction SilentlyContinue)) {
+            Say ("插件（AstrBot pid {0}）正在托管中间层，本守护不启动，避免两边互相拉起。" -f $owner) 'Yellow'
+            Say '  要改成手动管理：先在插件设置里关掉 auto_middleware，再重开本窗口。' 'DarkGray'
+            Start-Sleep -Seconds 8
+            exit 0
+        }
+    } catch {
+        # 标记损坏就当没有；不能因为读不懂一个 json 拒绝启动
+    }
 }
 
 # ---- 解释器：参数 > CHORUS_PYTHON > PATH 里的 python ----

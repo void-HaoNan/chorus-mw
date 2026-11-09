@@ -1,4 +1,4 @@
-﻿"""路径和默认参数。所有值都可以用同名环境变量覆盖，方便换机器。
+"""路径和默认参数。所有值都可以用同名环境变量覆盖，方便换机器。
 
 RVC 整合包的路径**不写死在代码里**，必须用环境变量给：
 
@@ -11,7 +11,7 @@ import os
 HOME = os.path.dirname(os.path.abspath(__file__))
 
 # 服务版本（和 CHANGELOG / README 对齐），启动日志与 /cache_info 都会带出来
-VERSION = "0.9.15"
+VERSION = "0.9.16"
 
 
 class ConfigError(RuntimeError):

@@ -25,6 +25,7 @@ sys.path.insert(0, HERE)
 import gradio as gr  # noqa: E402
 
 import config  # noqa: E402
+import parent_watch
 import pipeline  # noqa: E402
 import rvc  # noqa: E402
 
@@ -497,6 +498,7 @@ if __name__ == "__main__":
         for item in problems:
             print("  - " + item, flush=True)
         raise SystemExit(2)
+    parent_watch.start_from_env()
     print("chorus-mw %s 启动，RVC=%s 端口=%d" % (
         config.VERSION, config.RVC_ROOT, config.RVC_PORT), flush=True)
     print(

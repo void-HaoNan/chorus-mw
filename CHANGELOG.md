@@ -1,5 +1,28 @@
 # CHANGELOG
 
+## 0.9.16 — 2026-11-09
+
+**父进程看护 + 旧守护让位 + 整棵进程树停止：插件退出后不留孤儿进程。**
+
+现场：插件把中间层拉起来之后，如果 AstrBot 被任务管理器强杀（插件来不及做任何清理），
+3333 和常驻 worker 会一起留在后台占着显存；就算正常停止，旧版 `start.ps1 -Stop` 只
+`Stop-Process` 杀父进程，常驻 worker 也会变成孤儿。还有一台机器上 3333 是旧版
+`start_supervisor.ps1` 拉起的，守护 5~60 秒后会把刚停掉的 app.py 又拉回来。
+
+- 新：环境变量 `CHORUS_PARENT_PID`（插件拉起时自动传）。设了之后 `app.py` 起一个看护线程，
+  每 2 秒确认父进程还在；父进程消失就 `taskkill /PID <自己> /T /F`，连常驻 worker 一起退出，
+  日志写「父进程 N 已退出，停止中间层（含常驻 worker）」；
+- 新文件 `parent_watch.py`：只用 ctypes 调 `OpenProcess` + `WaitForSingleObject` 判断父进程，
+  不用 `os.kill`（Windows 上那是真杀进程）；
+- 改：`scripts/start.ps1 -Stop` 先找出这一份目录的旧守护 `start_supervisor.ps1`（按命令行、
+  祖先启动器、子进程、端口监听者四种方式认亲），`taskkill /T` 收掉，再结束整棵中间层进程树，
+  最后确认端口真的空出来；端口上是别的程序时拒绝停止；
+- 改：`scripts/start.ps1 -Status` 额外列出旧守护 pid；启动时如果端口空着但旧守护还在退避，
+  先收掉它再启动，避免两边抢 3333；
+- 改：`start_supervisor.ps1` 读插件写的 `middleware.json`，发现插件正在托管（`astrbot_pid` 还活着）
+  就拒绝启动，日志说明怎么切回手动管理；
+- 版本号 0.9.15 → 0.9.16。
+
 ## 0.9.15 — 2026-11-08
 
 **起停与自查脚本不再写死本机路径，一律读环境变量。**

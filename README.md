@@ -3,10 +3,20 @@
 RVC 翻唱中间层，给 AstrBot 的翻唱插件当后端用：
 丢一首歌进去，出来一段翻唱成品（默认 45 秒副歌，也可以自定长度、指定起点或整首翻唱）。
 
-当前版本：`0.9.15`。配套插件 `astrbot_plugin_chorus_cover` `0.19.16`（更老的插件版本也能用，只是没有清唱开关）。
+> ## ⚠️ 先看这条（用 AstrBot 翻唱插件的人）
+>
+> **不要单独启动中间层，也不要开 `start_supervisor.ps1`。**
+> `astrbot_plugin_chorus_cover` **0.19.17 起会托管 3333**：AstrBot 启动时自动拉起、发现旧守护/手动实例会接管、AstrBot 退出时连常驻 worker 一起关掉（Windows，`auto_middleware` 默认开）。
+>
+> - 装插件 + 中间层的完整步骤：<https://github.com/void-HaoNan/astrbot-plugin-chorus-cover>（README 最顶部有「发给 DSH / AI 助手」的安装指令，照抄即可）
+> - 只想手动调中间层：看下面「启动」里的手动办法，用完记得 `-Stop`
+> - 一台机器只能有一个管理者：插件托管时再开守护，关 AstrBot 会留进程，日志还会互相刷「已在监听」
+
+当前版本：`0.9.16`。配套插件 `astrbot_plugin_chorus_cover` `0.19.17`（更老的插件也能用，只是不会自动启停中间层）。
 
 | 版本 | 这一版加了什么 |
 | --- | --- |
+| `0.9.16` | 父进程看护：插件拉起时带 `CHORUS_PARENT_PID`，AstrBot 被强杀后中间层自己退出（含常驻 worker）；`start.ps1 -Stop` 改为结束整棵进程树 |
 | `0.9.15` | 起停与自查脚本不再写死本机路径：一律读环境变量（`CHORUS_RVC_ROOT` / `CHORUS_PYTHON` / `CHORUS_PLUGIN_CONFIG` / `CHORUS_PLUGIN_MAIN`），守护脚本也支持同名参数 |
 | `0.9.14` | 翻唱任务全局串行化：`/convert` 和 `/convert_vocal_only` 共用一把锁，后到的排队；可选「优先标记」插队 |
 | `0.9.13` | 清唱端点 `/convert_vocal_only`；每次请求打参数与开始/完成日志；守护启动器把中间层日志转印到自己的窗口 |
@@ -289,6 +299,23 @@ uvr5_*, msst_*, vocal_postprocess, shift_accompaniment`），末尾追加本机�
 
 ## 启动
 
+### 插件托管（推荐，什么都不用开）
+
+用 AstrBot 翻唱插件时，3333 由插件管：AstrBot 启动后 10~40 秒自动就绪，AstrBot 退出后自动关闭。
+插件设置里相关的四项（一键安装器会自动写全）：
+
+| 设置 | 值 |
+| --- | --- |
+| `auto_middleware` | 开（默认） |
+| `chorus_dir` | 本目录，例如 `D:\PYMSS-RVC\chorus-mw` |
+| `rvc_root` | RVC 整合包根目录（有 `runtime\python.exe`） |
+| `chorus_python` | 跑本服务的 Python（3.10~3.12） |
+
+插件会把这些转成 `CHORUS_RVC_ROOT` / `CHORUS_PYTHON` / `CHORUS_PARENT_PID` 再调 `start.ps1`。
+想看状态：群里 `/环境自检`，或命令行 `scripts\start.ps1 -Status`。
+
+### 手动启动（调试，或者用别的客户端）
+
 先设置 RVC 整合包路径（代码里不写死任何本机路径）：
 
 ```bat
@@ -300,20 +327,27 @@ python -X utf8 app.py
 
 ```bat
 powershell -ExecutionPolicy Bypass -File scripts\start.ps1           :: 启动
-powershell -ExecutionPolicy Bypass -File scripts\start.ps1 -Status   :: 看状态
-powershell -ExecutionPolicy Bypass -File scripts\start.ps1 -Stop     :: 停掉
+powershell -ExecutionPolicy Bypass -File scripts\start.ps1 -Status   :: 看状态（含旧守护）
+powershell -ExecutionPolicy Bypass -File scripts\start.ps1 -Stop     :: 停掉（连旧守护、worker 一起收）
 ```
 
 跑 `app.py` 的 Python 只要 3.12 + 能 import `libs_web` 里的东西即可；RVC 相关的重活都在
 `config.RVC_PYTHON`（整合包自带运行时）里跑。
 
-**守护启动（0.9.11）**：中间层可能因为整机内存耗尽被系统打崩（日志表现为 `LLVM ERROR: out of memory`
-后接 `CUDA error: unknown error`，进程以 `0xC0000005` 退出）。要它崩了自己起来就用守护启动器：
+**父进程看护（0.9.16）**：如果中间层是翻唱插件拉起的，环境里会多一个 `CHORUS_PARENT_PID`。
+中间层每 2 秒确认这个进程还在；AstrBot 被强杀、崩溃、或者插件进程消失时，中间层会执行
+`taskkill /PID <自己> /T /F`，连常驻 worker 一起退出，不留占着 3333 和显存的孤儿进程。
+手动启动时没有这个变量，看护不生效（手动起的就该由你手动停）。
+
+**旧守护（0.9.11 起的老办法，0.9.16 起只在关掉插件自动托管时才用）**：
+中间层可能因为整机内存耗尽被系统打崩（`LLVM ERROR: out of memory` + `0xC0000005`）。
+要它崩了自己起来，才用 `start_supervisor.ps1`：
 
 - 双击 `start_supervisor.bat`，或 `powershell -File start_supervisor.ps1`；
-- 进程退出自动重启，重启记录在 `_work/supervisor.log`；崩溃间隔太短会退避（5 秒起，最多 60 秒）；
-- 同时只允许一个守护循环（命名互斥量），第二个窗口会提示后退出，不会两个循环各起一个 app 抢 3333；
-- 窗口里实时显示中间层日志（把 `_work/mw.log` 转印过来，UTF-8 读取，标题「翻唱中间层3333」）。
+- 进程退出自动重启，记录在 `_work/supervisor.log`；崩溃间隔太短会退避（5 秒起，最多 60 秒）；
+- 同时只允许一个守护循环（命名互斥量）；
+- **插件托管时它会拒绝启动**：读 `middleware.json`，发现 `astrbot_pid` 还活着就提示后退出；
+- `scripts\start.ps1 -Stop` 会先收掉它，否则你刚停掉 app.py，5~60 秒后它又拉起来。
 
 > `start_supervisor.ps1` 和 `scripts\start.ps1` 一样只读环境变量，仓库里不写死任何本机路径：
 > 启动前设好 `CHORUS_RVC_ROOT`（必填）和 `CHORUS_PYTHON`（可选），或者直接传参数
@@ -328,6 +362,7 @@ powershell -ExecutionPolicy Bypass -File scripts\start.ps1 -Stop     :: 停掉
 | --- | --- | --- |
 | `CHORUS_RVC_ROOT` | 无，**必填** | RVC 整合包根目录（`start.ps1` 和守护脚本都读它） |
 | `CHORUS_PYTHON` | PATH 里的 python | 跑服务端的解释器（`scripts\start.ps1` 与 `start_supervisor.ps1` 用） |
+| `CHORUS_PARENT_PID` | 空 | 父进程看护（0.9.16）：插件拉起时自动填 AstrBot 的 pid，父进程消失就整棵树退出 |
 | `CHORUS_PLUGIN_CONFIG` | `%USERPROFILE%\data\config\astrbot_plugin_chorus_cover_config.json` | 翻唱插件配置文件路径，用来读 `netease_cookie`；换过 AstrBot 数据目录时指过来（0.9.15） |
 | `CHORUS_PLUGIN_MAIN` | `%USERPROFILE%\data\plugins\astrbot_plugin_chorus_cover\main.py` | `tools\check_plugin_compat.py` 默认比对的插件源码位置（0.9.15） |
 | `ASTRBOT_DATA_DIR` | `%USERPROFILE%\data` | AstrBot 数据目录；上面两项没设时按它拼默认路径 |
@@ -369,38 +404,32 @@ powershell -ExecutionPolicy Bypass -File scripts\start.ps1 -Stop     :: 停掉
 
 ## 和 AstrBot 一起开机
 
-### 推荐的启动顺序（2026-10-28 起）
+### 用翻唱插件时（推荐）
 
-一条前端两个后端加一个取歌服务，**顺序不要随意换**，尤其是 AstrBot 要放最后：
+**把中间层交给插件**：插件 0.19.17 起在 AstrBot 启动时拉起 3333、退出时关闭，不需要你为它单独开窗口或写开机项。
+启动顺序只要保证 AstrBot 之前把依赖它的东西起好即可：
 
 ```
 1) QQ             —— 先登录，后面 SnowLuma 要挂它
 2) SnowLuma       —— 挂 QQ、开 5099，把 OneBot 接到 AstrBot（可以晚连，会自动重试）
 3) GPT-SoVITS API —— 9880，模型加载最慢（实测 30~120 秒），早起点
-4) RVC 中间层      —— 本服务，3333；它会自己拉 RVC WebUI（7897）
-5) 网易云取歌      —— NeteaseCloudMusicApi，3003
-6) AstrBot        —— 最后起，等前面都就绪，机器人一上线就能唱歌/点歌
+4) 网易云取歌      —— NeteaseCloudMusicApi，3003
+5) AstrBot        —— 最后起；插件会在 10~40 秒内把 3333 拉起来
 ```
 
-为什么这么排：
+- **不要再单开「中间层3333」标签**：插件会起；两边都开就是两份管理者，关 AstrBot 也会留进程。
+- **RVC 7897 不用单独开**：中间层第一次翻唱时自己拉起，并随中间层一起结束；你另外开着的 7897 会被复用。
+- **AstrBot 最后**：它一起来就要处理消息；3333 还在加载时第一句翻唱会排队等，不会直接失败。
 
-- **QQ 必须最先**：SnowLuma 是挂到已登录的 QQ 进程上的，QQ 没起来它没东西可挂。
-- **AstrBot 必须最后**：它一起来就会处理消息；如果 3333 / 3003 还没就绪，用户第一句话
-  就可能碰到「翻唱失败 / 取歌失败」。放最后能保证它上线即能用。
-- **SnowLuma 在 AstrBot 之前没关系**：它是 ws 客户端，连不上 6199 会每 5 秒重试，
-  AstrBot 起来后自动接上。
-- **本中间层在 7897 之前没关系**：`ensure_rvc()` 会自己拉起 RVC WebUI 并等端口。
+### 不用插件 / 用别的客户端时
 
-Windows 下的现成实现是用户侧的一键启动脚本（例如 `D:\QQBOT\启动\start.ps1`，`-Status` / `-Stop` 也在里面），
-它按上面顺序逐项检查、没起就拉起来、起完才往下走。**建议就用它启动**，
-不要手动一个个开：手动开最容易漏 3003 或 3333，表现就是「机器人能聊天但点歌/唱歌失败」。
+才需要自己保证 3333 常驻。可以用 `start_supervisor.ps1`（崩溃自动重启），但**同一台机器只能有一个管理者**：
+用守护就不要再让插件托管（插件设置 `auto_middleware=false`）。
+Windows 下现成的一键启动脚本属于部署配置，不在本仓库内；自己写的时候按上面的顺序、只看端口就绪，不要用管道接服务输出。
 
 > 踩过的坑：启动器曾经用管道接网易云那一步的输出（`& powershell -File xxx.ps1 | ...`），
 > 被拉起的 node 继承了管道句柄，脚本卡在 `[4/6]` 不动、后面的 GPT-SoVITS 没机会启动
 > （服务其实已经起来了）。现在改成完全分离 + 只看端口，见 CHANGELOG 0.9.1。
-
-本仓库只负责中间层自己（3333）；AstrBot、SnowLuma、GPT-SoVITS、网易云取歌都是用户侧组件，
-启动器里怎么编排属于部署配置，不在本仓库内。
 
 ## 插件升级后怎么自查
 
@@ -442,6 +471,14 @@ python tools\check_plugin_compat.py --plugin-main "C:\你的\data\plugins\astrbo
 - **同时开了两个中间层 / 两个客户端抢 7897**：RVC WebUI 用一份全局模型状态，两边交替调 `/infer_change_voice`
   会互相把 pipeline 换掉，可能收到一个空错误（`ValueError:` 后面什么都没有）。同一时间只跑一个中间层；
   本服务自己的请求已经由常驻 worker 和 0.9.14 的全局锁串行化，但管不住别的客户端。
+- **关掉 AstrBot 后 3333 还在**：说明这份不是插件拉起的（外部实例），或者机器上还有旧守护。
+  `scripts\start.ps1 -Status` 会列出旧守护 pid；`scripts\start.ps1 -Stop` 会先收守护再收整棵树。
+  收完再重启 AstrBot，让插件用 `CHORUS_PARENT_PID` 重新拉起。
+- **`-Stop` 输出「端口还被占着」**：App 已经杀了，但有另一个守护在 5~60 秒后又拉起一份。
+  常见来源：另开着一个 `start_supervisor.ps1` 窗口、直播控制台的守护、或第二份 chorus-mw 目录。
+  同一台机器只能留一个管理者。
+- **日志里反复出现「端口 3333 已在监听，可能已经有中间层在跑」**：两份管理者在互相让路。
+  看 `_work\supervisor.log` 是哪个守护在跑；用插件托管时把这个守护窗口关掉。
 
 ## 分离模型
 
