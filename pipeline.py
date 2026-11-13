@@ -25,6 +25,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import config
 import chorus
+import pick
 import rvc
 
 
@@ -142,18 +143,25 @@ def download_netease_via_api(keyword):
     songs = (search.get("result") or {}).get("songs") or []
     if not songs:
         raise RuntimeError("网易云搜不到这首歌：%s" % keyword)
-    best = max(songs, key=lambda item: _score_song(item, keyword))
+    # 2026-11-14：照搬 chorus_cover 的权重打分（硬条件 + 权重 + 50 分门槛）。
+    # 以前是 max(_score_song) 无条件取，歌名一脏就唱另一首。
+    candidates = [pick.candidate_from_song(item) for item in songs]
+    best, status, summary = pick.pick_best_song(
+        [c for c in candidates if c is not None], keyword)
+    print("[chorus-mw] 选歌：%s（%s）%s" % (status, summary[:160], "" if best else "，不唱"), flush=True)
+    if best is None:
+        raise RuntimeError("没找到能确认的版本：%s" % keyword)
     cookie = str(getattr(config, "NETEASE_COOKIE", "") or "")
     detail = requests.get(
         base + "/song/url/v1",
-        params={"id": best["id"], "level": "exhigh", "cookie": cookie},
+        params={"id": best.id, "level": "exhigh", "cookie": cookie},
         headers=headers, timeout=25,
     ).json()
     items = detail.get("data") or []
     url = (items[0].get("url") if items else "") or ""
     if not url:
-        raise RuntimeError("网易云没给播放地址（可能没版权）：%s" % best.get("name"))
-    out = os.path.join(config.WORK_DIR, "dl", _safe(best.get("name") or keyword) + ".mp3")
+        raise RuntimeError("网易云没给播放地址（可能没版权）：%s" % best.name)
+    out = os.path.join(config.WORK_DIR, "dl", _safe(best.name or keyword) + ".mp3")
     os.makedirs(os.path.dirname(out), exist_ok=True)
     with requests.get(url, headers=headers, timeout=120, stream=True) as resp:
         resp.raise_for_status()
@@ -162,8 +170,8 @@ def download_netease_via_api(keyword):
                 f.write(chunk)
     if os.path.getsize(out) < 100 * 1024:
         raise RuntimeError("下载到的文件太小，可能被风控：%s" % out)
-    print("[chorus-mw] 取歌成功（本地 API）：%s / %s" % (
-        best.get("name"), "、".join(str(a.get("name")) for a in (best.get("artists") or []) if isinstance(a, dict))), flush=True)
+    print("[chorus-mw] 取歌成功（本地 API）：%s / %s（得分 %.0f）" % (
+        best.name, best.artists, best.score), flush=True)
     return out
 
 
@@ -189,7 +197,13 @@ def download_netease(keyword):
     songs = (search.get("result") or {}).get("songs") or []
     if not songs:
         raise RuntimeError("网易云搜不到这首歌：%s" % query)
-    song = songs[0]
+    candidates = [pick.candidate_from_song(item) for item in songs]
+    picked, status, summary = pick.pick_best_song(
+        [c for c in candidates if c is not None], query)
+    print("[chorus-mw] 选歌（老路子）：%s（%s）" % (status, summary[:120]), flush=True)
+    if picked is None:
+        raise RuntimeError("没找到能确认的版本：%s" % query)
+    song = next((raw for raw in songs if int(raw.get("id") or 0) == picked.id), songs[0])
     params = {"id": song["id"], "br": 7, "type": "json"}
     try:
         detail = requests.get(config.NETEASE_PARSE, params=params, headers=headers, timeout=25).json()
